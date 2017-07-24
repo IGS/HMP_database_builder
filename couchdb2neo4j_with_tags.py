@@ -716,8 +716,16 @@ if __name__ == '__main__':
         help="How many documents to request from CouchDB in each batch.")
 
     parser.add_argument(
-        "--neo4j_password", default="neo4j",
+        "--neo4j_password", type=str, default="neo4j",
         help="The password for Neo4j")
+
+    parser.add_argument(
+        "--http_port", type=int, default=7474,
+        help="The port for the exposed HTTP location")
+
+    parser.add_argument(
+        "--bolt_port", type=int, default=7687,
+        help="The port for the exposed bolt location")
 
     parser.add_argument(
         "--batch_size", type=int, default=500,
@@ -725,7 +733,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    cy = Graph(password = args.neo4j_password)
+    cy = Graph(password = args.neo4j_password, bolt_port = args.bolt_port, http_port = args.http_port)
 
     _build_constraint_index('subject','id',cy)
     _build_constraint_index('sample','id',cy)
