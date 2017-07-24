@@ -16,8 +16,7 @@ def main():
     parser.add_argument('--loader_script', '-ls', type=str, help='Location of couchdb2neo4j_with_tags.py or other loader script.')
     args = parser.parse_args()
 
-    # Build a tmp directory to mount the transient Neo4j database
-    try:
+    try: # Build a tmp directory to mount the transient Neo4j database
         os.makedirs(args.tmp_dir)
     except OSError as exception:
         if exception.errno != errno.EEXIST:
@@ -35,7 +34,6 @@ def main():
     subprocess.call(load_database.split())
     neo4j.kill()
 
-    # Stop the Docker container now that the DB has been loaded
     stop_neo4j_docker = "docker rm -f transient_neo4j"
     subprocess.call(stop_neo4j_docker.split())
 
@@ -54,10 +52,8 @@ def main():
     start_neo4j = "{0} start".format(args.neo4j_exe)
     subprocess.call(start_neo4j.split())
     
-    try:
-        os.rmdir(args.tmp_dir)
-    except OSError as exception:
-        raise
+    remove_tmp_dir = "rm -rf {0}".format(args.tmp_dir) # -rf due to Neo4j data/dbms
+    subprocess.call(remove_tmp_dir)
 
 
 if __name__ == '__main__':
