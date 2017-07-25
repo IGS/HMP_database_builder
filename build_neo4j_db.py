@@ -10,9 +10,9 @@ def main():
     parser.add_argument('--tmp_dir', '-td', type=str, help='Temporary location to build and place the loaded Neo4j database. MUST be an absolute path to mount via Docker.')
     parser.add_argument('--neo4j_exe', '-ne', type=str, help='Location of the Neo4j executable.')
     parser.add_argument('--neo4j_version', '-nv', type=str, help='Version of Neo4j to load to (e.g. 3.1.1).')
-    parser.add_argument('--neo4j_db_path', '-ndp', type=str, help='Path to ~/data/databases move the newly made Neo4j database to.')
-    parser.add_argument('--batch_size', '-bs', type=int, help='How many Cypher transactions to commit at a time over py2neo.')
-    parser.add_argument('--db', '-d', type=str, help='URL for CouchDB of OSDF.')
+    parser.add_argument('--neo4j_db_path', '-ndp', type=str, help='Path to ~/data/databases to move the newly made Neo4j database to.')
+    parser.add_argument('--batch_size', '-bs', type=int, help='How many Cypher transactions to commit in each batch via py2neo.')
+    parser.add_argument('--db', '-d', type=str, help='URL:PORT for CouchDB of OSDF.')
     parser.add_argument('--loader_script', '-ls', type=str, help='Location of couchdb2neo4j_with_tags.py or other loader script.')
     args = parser.parse_args()
 
