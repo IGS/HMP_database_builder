@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
+# Script which uses Docker to build a HMP Neo4j database by streaming the data 
+# from CouchDB.
+#
+# Author: James Matsumura
+# Contact: jmatsumura@som.umaryland.edu
+
 import argparse,os,subprocess,errno,datetime
 
 def main():
