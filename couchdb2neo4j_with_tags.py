@@ -742,7 +742,7 @@ if __name__ == '__main__':
     _build_constraint_index('tag','term',cy)
     _build_constraint_index('user','username',cy)
     _build_constraint_index('session','id',cy)
-    _build_constraint_index('query','query_str',cy)
+    _build_constraint_index('query','url',cy)
 
     # Now just loop through and create documents. I like counters, so there's
     # one to tell me how much has been done. I also like timers, so there's one
