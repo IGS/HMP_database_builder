@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # Script which uses Docker to build a HMP Neo4j database by streaming the data 
-# from CouchDB.
+# from CouchDB and solely yields a tarball, does not move this in place of Neo4j. 
 #
 # Author: James Matsumura
 # Contact: jmatsumura@som.umaryland.edu
@@ -13,17 +13,15 @@ def main():
     parser = argparse.ArgumentParser(description='Script to build a Neo4j database using OSDF.')
     parser.add_argument('--http', '-hp', type=str, help='Port to map the http port to, should not be 7474 to avoid conflict of live database.')
     parser.add_argument('--bolt', '-bp', type=str, help='Port to map the bolt port to, should not be 7687 to avoid conflict of live database.')
-    parser.add_argument('--tmp_dir', '-td', type=str, help='Temporary location to build and place the loaded Neo4j database. MUST be an absolute path to mount via Docker.')
-    parser.add_argument('--neo4j_exe', '-ne', type=str, help='Location of the Neo4j executable.')
+    parser.add_argument('--out_dir', '-od', type=str, help='Output location to build and place the loaded Neo4j database. MUST be an absolute path to mount via Docker.')
     parser.add_argument('--neo4j_version', '-nv', type=str, help='Version of Neo4j to load to (e.g. 3.1.1).')
-    parser.add_argument('--neo4j_db_path', '-ndp', type=str, help='Path to ~/data/databases to move the newly made Neo4j database to.')
     parser.add_argument('--batch_size', '-bs', type=int, help='How many Cypher transactions to commit in each batch via py2neo.')
     parser.add_argument('--db', '-d', type=str, help='URL:PORT for CouchDB of OSDF.')
     parser.add_argument('--loader_script', '-ls', type=str, help='Location of couchdb2neo4j_with_tags.py or other loader script.')
     args = parser.parse_args()
 
     try: # Build a tmp directory to mount the transient Neo4j database
-        os.makedirs(args.tmp_dir)
+        os.makedirs(args.out_dir)
     except OSError as exception:
         if exception.errno != errno.EEXIST:
             raise
@@ -43,24 +41,11 @@ def main():
     stop_neo4j_docker = "docker rm -f transient_neo4j"
     subprocess.call(stop_neo4j_docker.split())
 
-    stop_neo4j = "{0} stop".format(args.neo4j_exe)
-    subprocess.call(stop_neo4j.split())
+    build_tarball = "tar -czf {1}.tar.gz {0}/databases/graph.db".format(args.out_dir,datetime.date.today())
+    subprocess.call(build_tarball.split())
 
-    archive_old_database = "tar -czf {0}/{1}.tar.gz {0}/graph.db".format(args.neo4j_db_path,datetime.date.today())
-    subprocess.call(archive_old_database.split())
-
-    remove_old_database = "rm -rf {0}/graph.db".format(args.neo4j_db_path)
-    subprocess.call(remove_old_database.split())
-
-    move_new_database = "mv {0}/databases/graph.db {1}/".format(args.tmp_dir,args.neo4j_db_path)
-    subprocess.call(move_new_database.split())
-
-    start_neo4j = "{0} start".format(args.neo4j_exe)
-    subprocess.call(start_neo4j.split())
-    
-    remove_tmp_dir = "rm -rf {0}".format(args.tmp_dir) # -rf due to Neo4j data/dbms
-    subprocess.call(remove_tmp_dir)
-
+    remove_untarred_database = "rm -rf {0}/databases".format(args.out_dir)
+    subprocess.call(remove_untarred_database.split())
 
 if __name__ == '__main__':
     main()
