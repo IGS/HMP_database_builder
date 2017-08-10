@@ -7,7 +7,7 @@
 # Author: James Matsumura
 # Contact: jmatsumura@som.umaryland.edu
 
-import argparse,json,time
+import argparse,json,datetime
 from py2neo import Graph
 
 def main():
@@ -38,7 +38,7 @@ def main():
     # Regardless of if a session is present, attach a query to the user
     create_user_query_cypher = """
         MERGE (u:user {{ username:'{0}' }}) 
-        MERGE (q:query {{ query_str:'{1}', url:'{2}', f_count{3}, s_count{4} }}) 
+        MERGE (q:query {{ query_str:'{1}', url:'{2}', f_count:{3}, s_count:{4} }}) 
         MERGE (u)-[:saved_query]->(q)
     """
 
@@ -46,20 +46,36 @@ def main():
     # user (and potentially a session).
     relevant_nodes = cy.run(extract_session_user_query_cypher).data()
 
+    session_statements = set() # don't repeat session statements
+
     with open(args.outfile,'w') as out:
         for res in relevant_nodes:
 
             if 's' in res:
-                cleansed_string = create_session_user_cypher.format(
-                        res['u']['username'],
-                        res['s']['id'],
-                        res['s']['created_at']
-                    ).strip().replace("\n"," ")
+                if res['s']:
 
-                out.write("{0}\n".format(cleansed_string))
+                    # Neo4j, by default, does milliseconds since epoch
+                    seconds_since_epoch = res['s']['created_at'] / 1000.0
+
+                    today = datetime.datetime.now() # get a point to measure the user's login against
+                    logged_in_time = datetime.datetime.fromtimestamp(seconds_since_epoch)
+
+                    diff = today - logged_in_time
+
+                    if diff.days < 1: # if within 24 hrs, leave the login as present
+                    
+                        cleansed_string = create_session_user_cypher.format(
+                                res['u']['username'],
+                                res['s']['id'],
+                                res['s']['created_at']
+                            ).strip().replace("\n"," ")
+
+                        if cleansed_string not in session_statements:
+                            session_statements.add(cleansed_string)
+                            out.write("{0}\n".format(cleansed_string))
             
-            # no matter what, there's a query
-
+            # no matter whether we stored a session or not, 
+            # there's a query if there's a result here
             cleansed_string = create_user_query_cypher.format(
                     res['u']['username'],
                     res['q']['query_str'],
