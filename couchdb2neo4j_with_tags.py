@@ -426,9 +426,6 @@ def _find_upstream_node(node_dict,node_name,link_id):
 
 # This function collects sample-project nodes as these can consistently be 
 # retrieved in a similar manner.
-#
-# Note a lack of *_attribute nodes. When real data for these is uploaded they
-# will be tested and accounted for.
 def _collect_sample_through_project(all_nodes_dict,doc):
     
     doc['sample'] = _find_upstream_node(all_nodes_dict['sample'],'sample',doc['prep']['linkage']['prepared_from'])
@@ -441,7 +438,53 @@ def _collect_sample_through_project(all_nodes_dict,doc):
     if doc['project']['id'] == '610a4911a5ca67de12cdc1e4b40018e1':
         return None
     else:
+        doc = _append_attribute_data(all_nodes_dict,doc)
         return doc
+
+# This function appends attribute data to the current node doc type.  
+# Note this will only occur if there is such data available. Takes
+# in all the nodes and the current doc to update
+#
+# Currently this ONLY does sample_attribute correctly as there is no live
+# visit_attribute and subject_attribute with actual data. Likely the changes
+# needed to accommodate the others are to:
+# 1) add more to the sets 'meta_to_keep' and 'null_vals'
+# 2) make sure that the relevant properties are one step down from the 'doc' key
+def _append_attribute_data(all_nodes_dict,doc):
+
+    attributes = ['sample_attribute','visit_attribute','subject_attribute']
+
+    # properties which should persist from OSDF/cutlass to the portal browser
+    meta_to_keep = {
+        'fecalcal'
+    }
+
+    # values, chosen by submitters, to fill in blank fields if they have no 
+    # data for the attribute
+    null_vals = {
+        'nan'
+    }
+
+    for attr in attributes:
+        if attr in all_nodes_dict: # only act if attr data is present
+
+            node_to_add_to = attr.split('_')[0]
+
+            if type(doc[node_to_add_to]) is list:
+                if doc[node_to_add_to][-1]['id'] in all_nodes_dict[attr]:
+                    for k,v in all_nodes_dict[attr][doc[node_to_add_to][-1]['id']]['doc'].items():
+                        if k in meta_to_keep:
+                            if v not in null_vals:
+                                doc[node_to_add_to][-1][k] = v
+
+            else:
+                if doc[node_to_add_to]['id'] in all_nodes_dict[attr]:
+                    for k,v in all_nodes_dict[attr][doc[node_to_add_to]['id']]['doc'].items():
+                        if k in meta_to_keep:
+                            if v not in null_vals:
+                                doc[node_to_add_to][k] = v
+
+    return doc
 
 # Similar to _find_upstream_node() except this one finds multiple upstream nodes.
 # Returns a list at that dict for each upstream node. 
@@ -478,6 +521,8 @@ def _multi_collect_sample_through_project(all_nodes_dict,doc):
         doc['subject'].append(_find_upstream_node(all_nodes_dict['subject'],'subject',doc['visit'][new_idx]['linkage']['by']))
         doc['study'].append(_find_upstream_node(all_nodes_dict['study'],'study',doc['subject'][new_idx]['linkage']['participates_in']))
         doc['project'].append(_find_upstream_node(all_nodes_dict['project'],'project',doc['study'][new_idx]['linkage']['part_of']))
+
+        doc = _append_attribute_data(all_nodes_dict,doc)
     
     return doc
 
@@ -884,7 +929,16 @@ if __name__ == '__main__':
 
         # Build a giant list of each node type
         if doc['doc']['node_type'] in nodes:
-            nodes[doc['doc']['node_type']][doc['id']] = doc
+
+            # Also, for these nodes, assign their ID to be the same as the 
+            # sample/visit/subject they associate with for easy lookups. 
+            # The data will also be subset to the 'meta' section as that is
+            # where the interesting information lies in the attribute nodes. 
+            if doc['doc']['node_type'].endswith("attribute"):
+                nodes[doc['doc']['node_type']][doc['doc']['linkage']['associated_with'][0]] = doc
+            else:
+                nodes[doc['doc']['node_type']][doc['id']] = doc
+
         else:
             print("Warning, skipping node with type: {0}".format(doc['doc']['node_type']))
 
