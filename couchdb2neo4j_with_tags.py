@@ -475,14 +475,27 @@ def _append_attribute_data(all_nodes_dict,doc):
                     for k,v in all_nodes_dict[attr][doc[node_to_add_to][-1]['id']]['doc'].items():
                         if k in meta_to_keep:
                             if v not in null_vals:
-                                doc[node_to_add_to][-1][k] = v
+                                # Slightly different since this is not a base node,
+                                # be sure to keep consistent with what advanced query
+                                # will mention this as (visit_metadata) even though
+                                # it will be bound 1:1 with a sample. subject and 
+                                # sample don't need a prefix since they're considered
+                                # to be the root of the query and don't have a prefix
+                                # to subset its data in autocomplete. 
+                                if attr == 'visit_attribute':
+                                    doc[node_to_add_to][-1]["visit_{0}".format(k)] = v
+                                else:
+                                    doc[node_to_add_to][-1][k] = v
 
             else:
                 if doc[node_to_add_to]['id'] in all_nodes_dict[attr]:
                     for k,v in all_nodes_dict[attr][doc[node_to_add_to]['id']]['doc'].items():
                         if k in meta_to_keep:
                             if v not in null_vals:
-                                doc[node_to_add_to][k] = v
+                                if attr == 'visit_attribute': 
+                                    doc[node_to_add_to]["visit_{0}".format(k)] = v
+                                else:
+                                    doc[node_to_add_to][k] = v
 
     return doc
 
