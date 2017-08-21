@@ -65,6 +65,11 @@ def main():
     stop_neo4j = "{0} stop".format(args.neo4j_exe)
     subprocess.call(stop_neo4j.split())
 
+    # The transaction stores make up a bulk of the DB, remove them as we can 
+    # recreate through this mechanism regardless. 
+    remove_transactions = "rm {0}/databases/graph.db/neostore.transaction.db.*".format(args.out_dir)
+    subprocess.call(remove_transactions)
+
     archive_old_database = "tar -czf {0}/{1}.tar.gz {0}/graph.db".format(args.neo4j_db_path,datetime.date.today())
     subprocess.call(archive_old_database.split())
 

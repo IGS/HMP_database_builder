@@ -41,6 +41,9 @@ def main():
     stop_neo4j_docker = "docker rm -f transient_neo4j"
     subprocess.call(stop_neo4j_docker.split())
 
+    remove_transactions = "rm {0}/databases/graph.db/neostore.transaction.db.*".format(args.out_dir)
+    subprocess.call(remove_transactions)
+
     build_tarball = "tar -czf {1}.tar.gz {0}/databases/graph.db".format(args.out_dir,datetime.date.today())
     subprocess.call(build_tarball.split())
 
