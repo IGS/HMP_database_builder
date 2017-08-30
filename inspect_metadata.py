@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 
-# Script to export the user, session, and query nodes from a HMP Neo4j 
-# instance. Will generate an output file that can then be fed into the
-# corresponding neo4j_import_user_info.py. 
+# Script to isolate all the possible metadata values for every key. This is 
+# specific to the *attribute nodes as these have more freeform inputs than
+# the others. Before checking a file, will want to subset by just the *attr 
+# nodes using a command like:
+# 
+# grep '"node_type":"[a-z]\{3,\}\_attr*"' couchdb_changesfeed.json > filtered_dump.json
+#
+# ./HMP_database_builder/inspect_metadata.py -if filtered_dump.json -of all_persistent_vals.out
 #
 # Author: James Matsumura
 # Contact: jmatsumura@som.umaryland.edu
-
-# ../HMP_database_builder/inspect_metadata.py -if no_carots.json 
 
 import argparse,json,re
 from collections import defaultdict
@@ -30,13 +33,21 @@ def main():
 
             if 'doc' in json_line:
                 if 'meta' in json_line['doc']:
-                    if re.search(r'\_attr*',json_line['doc']['node_type']):
-                        unnested_kv_generator(json_line['doc']['meta'],'meta',all_possible)
+                    unnested_kv_generator(json_line['doc']['meta'],'meta',all_possible)
 
     with open(args.outfile,'w') as outf:
         for k,v in all_possible.items():
             outf.write("{}\t{}\n".format(k,v))
-                
+
+values_to_ignore = {
+    'none',
+    'n/a',
+    'not applicable',
+    'unknown/undiagnosed',
+    'dad',
+    'mom',
+    'unknown/not reported'
+}                
 
 def unnested_kv_generator(json_input,key,uniq_vals):
     if isinstance(json_input, dict):
@@ -47,7 +58,11 @@ def unnested_kv_generator(json_input,key,uniq_vals):
             unnested_kv_generator(item,key,uniq_vals)
     else:
         if json_input: # ignore blanks
-            uniq_vals[key].add(json_input)
+            if isinstance(json_input,str):
+                if json_input.lower() not in values_to_ignore:
+                    uniq_vals[key].add(json_input)
+            else: # allow bools through
+                uniq_vals[key].add(json_input)
 
 if __name__ == '__main__':
     main()
