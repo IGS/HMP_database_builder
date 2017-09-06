@@ -39,6 +39,18 @@ def main():
         for k,v in all_possible.items():
             outf.write("{}\t{}\n".format(k,v))
 
+keys_to_keep = {
+    'walking',
+    'mod_activity',
+    'vig_activity',
+    'study_disease',
+    'study_disease_status',
+    'snacks',
+    'breakfast',
+    'lunch',
+    'dinner'
+}
+
 values_to_ignore = {
     'none',
     'n/a',
@@ -46,23 +58,28 @@ values_to_ignore = {
     'unknown/undiagnosed',
     'dad',
     'mom',
-    'unknown/not reported'
+    'unknown/not reported',
+    ''
 }                
 
 def unnested_kv_generator(json_input,key,uniq_vals):
+
     if isinstance(json_input, dict):
-        for k in json_input:
-            unnested_kv_generator(json_input[k],k,uniq_vals)
+        if key in keys_to_keep:
+            for k,v in json_input.items():
+                unnested_kv_generator(json_input[k],"{}_{}".format(key,k),uniq_vals)
+        else:
+            for k in json_input:
+                unnested_kv_generator(json_input[k],k,uniq_vals)
     elif isinstance(json_input, list):
         for item in json_input:
             unnested_kv_generator(item,key,uniq_vals)
     else:
-        if json_input: # ignore blanks
-            if isinstance(json_input,str):
-                if json_input.lower() not in values_to_ignore:
-                    uniq_vals[key].add(json_input)
-            else: # allow bools through
+        if isinstance(json_input,str):
+            if json_input.lower() not in values_to_ignore:
                 uniq_vals[key].add(json_input)
+        else: # allow bools through
+            uniq_vals[key].add(json_input)
 
 if __name__ == '__main__':
     main()
