@@ -25,6 +25,7 @@
 import time,sys,argparse,requests
 from py2neo import Graph
 from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
+from accs_for_couchdb2neo4j import files_only, meta_to_keep, meta_null_vals, keys_to_keep, ignore
 
 try:
     import simplejson as json
@@ -232,9 +233,6 @@ def _build_wgs_transcriptomics_doc(all_nodes_dict,node):
     which_prep = "" # can be wgs_dna or host_seq
 
     doc['main'] = node['doc']
-
-    if len(set(doc['main']['linkage']['sequenced_from'])) > 1:
-        print(doc['main']['id'])
 
     link = _refine_link(doc['main']['linkage']['sequenced_from'])
 
@@ -444,26 +442,9 @@ def _collect_sample_through_project(all_nodes_dict,doc):
 # This function appends attribute data to the current node doc type.  
 # Note this will only occur if there is such data available. Takes
 # in all the nodes and the current doc to update
-#
-# Currently this ONLY does sample_attribute correctly as there is no live
-# visit_attribute and subject_attribute with actual data. Likely the changes
-# needed to accommodate the others are to:
-# 1) add more to the sets 'meta_to_keep' and 'null_vals'
-# 2) make sure that the relevant properties are one step down from the 'doc' key
 def _append_attribute_data(all_nodes_dict,doc):
 
     attributes = ['sample_attribute','visit_attribute','subject_attribute']
-
-    # properties which should persist from OSDF/cutlass to the portal browser
-    meta_to_keep = {
-        'fecalcal'
-    }
-
-    # values, chosen by submitters, to fill in blank fields if they have no 
-    # data for the attribute
-    null_vals = {
-        'nan'
-    }
 
     for attr in attributes:
         if attr in all_nodes_dict: # only act if attr data is present
@@ -471,33 +452,40 @@ def _append_attribute_data(all_nodes_dict,doc):
             node_to_add_to = attr.split('_')[0]
 
             if type(doc[node_to_add_to]) is list:
-                if doc[node_to_add_to][-1]['id'] in all_nodes_dict[attr]:
-                    for k,v in all_nodes_dict[attr][doc[node_to_add_to][-1]['id']]['doc'].items():
-                        if k in meta_to_keep:
-                            if v not in null_vals:
-                                # Slightly different since this is not a base node,
-                                # be sure to keep consistent with what advanced query
-                                # will mention this as (visit_metadata) even though
-                                # it will be bound 1:1 with a sample. subject and 
-                                # sample don't need a prefix since they're considered
-                                # to be the root of the query and don't have a prefix
-                                # to subset its data in autocomplete. 
-                                if attr == 'visit_attribute':
-                                    doc[node_to_add_to][-1]["visit_{0}".format(k)] = v
-                                else:
-                                    doc[node_to_add_to][-1][k] = v
+                for x in range(0,len(doc[node_to_add_to])):
+                    if doc[node_to_add_to][x]['id'] in all_nodes_dict[attr]:
+                        for k,v in all_nodes_dict[attr][doc[node_to_add_to][x]['id']]['doc'].items():
+                            if k in meta_to_keep: # only persist new/relevant information
+                                v = _standardize_value(v)
+                                if v is not None:
+                                    doc[node_to_add_to][x][k] = v                                    
 
             else:
                 if doc[node_to_add_to]['id'] in all_nodes_dict[attr]:
                     for k,v in all_nodes_dict[attr][doc[node_to_add_to]['id']]['doc'].items():
                         if k in meta_to_keep:
-                            if v not in null_vals:
-                                if attr == 'visit_attribute': 
-                                    doc[node_to_add_to]["visit_{0}".format(k)] = v
-                                else:
-                                    doc[node_to_add_to][k] = v
+                            v = _standardize_value(v)
+                            if v is not None:
+                                doc[node_to_add_to][k] = v
 
     return doc
+
+# Function to test a value for type and return a consistent data type across 
+# various attr values. Already have purged null values, so simply pass along
+# bools/ints and make sure any strings aren't in the null set defined by
+# meta_null_vals.
+def _standardize_value(value):
+
+    if not isinstance(value,str):
+        if isinstance(value,bool):
+            return str(value)
+        else:
+            return value
+    else:
+        if value.lower() not in meta_null_vals:
+            return value
+        else:
+            return None
 
 # Similar to _find_upstream_node() except this one finds multiple upstream nodes.
 # Returns a list at that dict for each upstream node. 
@@ -842,28 +830,6 @@ if __name__ == '__main__':
         'abundance_matrix': {}
     }
 
-    files_only = {
-        'wgs_raw_seq_set',
-        'wgs_raw_seq_set_private',
-        'host_wgs_raw_seq_set',
-        'microb_transcriptomics_raw_seq_set',
-        'host_transcriptomics_raw_seq_set',
-        'wgs_assembled_seq_set',
-        'viral_seq_set',
-        'annotation',
-        'clustered_seq_set',
-        '16s_dna_prep',
-        '16s_raw_seq_set',
-        '16s_trimmed_seq_set',
-        'microb_assay_prep',
-        'host_assay_prep',
-        'proteome',
-        'metabolome',
-        'lipidome',
-        'cytokine',
-        'abundance_matrix'
-    }
-
     for doc in _all_docs_by_page(args.db, args.page_size):
         # Assume we don't want design documents, since they're likely to be
         # already stored elsewhere (e.g. in version control)
@@ -921,8 +887,12 @@ if __name__ == '__main__':
                         if isinstance(va,dict):
                             
                             for k,v in doc['doc']['meta'][key][ke].items(): 
+
                                 if k and v:
-                                    doc['doc'][k] = v
+                                    if ke in keys_to_keep:
+                                        doc['doc']["{}_{}".format(ke,k)] = v
+                                    else:
+                                        doc['doc'][k] = v
 
                         else:
                             if ke and va:
@@ -934,7 +904,7 @@ if __name__ == '__main__':
 
             del doc['doc']['meta']
 
-        doc['doc']['id'] = doc['id']
+        doc['doc']['id'] = doc['id'] # move everything into 'doc' key
 
         # Fix the old syntax to make sure it reads 'attribute' and not just 'attr'
         if doc['doc']['node_type'].endswith("_attr"):
@@ -948,7 +918,8 @@ if __name__ == '__main__':
             # The data will also be subset to the 'meta' section as that is
             # where the interesting information lies in the attribute nodes. 
             if doc['doc']['node_type'].endswith("attribute"):
-                nodes[doc['doc']['node_type']][doc['doc']['linkage']['associated_with'][0]] = doc
+                if len(doc['doc']['linkage']['associated_with']) > 0: # get around test uploads
+                    nodes[doc['doc']['node_type']][doc['doc']['linkage']['associated_with'][0]] = doc
             else:
                 nodes[doc['doc']['node_type']][doc['id']] = doc
 
@@ -962,26 +933,6 @@ if __name__ == '__main__':
         if (counter % 1000) == 0:
             sys.stderr.write(str(counter) + '\r')
             sys.stderr.flush()
-
-    # These erroneous test docs ought to be corrected at the OSDF level
-    ignore_us = ['88af6472fb03642dd5eaf8cddc37b0f3','88af6472fb03642dd5eaf8cddc2f50b1',
-        '88af6472fb03642dd5eaf8cddc2f07c1','88af6472fb03642dd5eaf8cddc712ed7',
-        '932d8fbc70ae8f856028b3f67cfab1ed','b9af32d3ab623bcfbdce2ea3a502c015',
-        '610a4911a5ca67de12cdc1e4b4014cd0','610a4911a5ca67de12cdc1e4b40135fe',
-        '610a4911a5ca67de12cdc1e4b4014133','610a4911a5ca67de12cdc1e4b40156e8',
-        '610a4911a5ca67de12cdc1e4b40164de','610a4911a5ca67de12cdc1e4b4017467',
-        '610a4911a5ca67de12cdc1e4b4017ab9','9bb18fe313e7fe94bf243da07e000de0',
-        '9bb18fe313e7fe94bf243da07e00107e','b9af32d3ab623bcfbdce2ea3a5016b61',
-        '9bb18fe313e7fe94bf243da07e003ac0','419d64483ec86c1fb9a94025f3b94551',
-        '88af6472fb03642dd5eaf8cddc70c8ec','88af6472fb03642dd5eaf8cddc70d1de',
-        '858ed4564f11795ec13dda4c109b345f','67ff3a7b9227c8c6f1db4bbf2226fc4b',
-        '67ff3a7b9227c8c6f1db4bbf2227079e','88af6472fb03642dd5eaf8cddc2f4cb4',
-        '88af6472fb03642dd5eaf8cddc2f4340','194149ed5273e3f94fc60a9ba5001573',
-        '194149ed5273e3f94fc60a9ba59d2c9f','88af6472fb03642dd5eaf8cddc2f5abe',
-        '9bb18fe313e7fe94bf243da07e0032e4','88af6472fb03642dd5eaf8cddc2f3405',
-        '194149ed5273e3f94fc60a9ba50069b0','88af6472fb03642dd5eaf8cddc714325',
-        '5a950f27980b5d93e4c16da1243b7c05','5a950f27980b5d93e4c16da1243b821c']
-    ignore = set(ignore_us)
 
     # build a list of all Cypher statements to build the entire DB
     cypher_statements = [] 

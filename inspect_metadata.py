@@ -9,11 +9,15 @@
 #
 # ./HMP_database_builder/inspect_metadata.py -if filtered_dump.json -of all_persistent_vals.out
 #
+# Can transfer all these newly found fields in mass to accs_for_couchdb2neo4j via (then replace @@ with '):
+# cut -f1 test3 | sort | awk '{ print "\@\@"$0"\@\@,"}'
+# 
 # Author: James Matsumura
 # Contact: jmatsumura@som.umaryland.edu
 
 import argparse,json,re
 from collections import defaultdict
+from accs_for_couchdb2neo4j import meta_null_vals, keys_to_keep
 
 def main():
 
@@ -39,29 +43,6 @@ def main():
         for k,v in all_possible.items():
             outf.write("{}\t{}\n".format(k,v))
 
-keys_to_keep = {
-    'walking',
-    'mod_activity',
-    'vig_activity',
-    'study_disease',
-    'study_disease_status',
-    'snacks',
-    'breakfast',
-    'lunch',
-    'dinner'
-}
-
-values_to_ignore = {
-    'none',
-    'n/a',
-    'not applicable',
-    'unknown/undiagnosed',
-    'dad',
-    'mom',
-    'unknown/not reported',
-    ''
-}                
-
 def unnested_kv_generator(json_input,key,uniq_vals):
 
     if isinstance(json_input, dict):
@@ -72,11 +53,12 @@ def unnested_kv_generator(json_input,key,uniq_vals):
             for k in json_input:
                 unnested_kv_generator(json_input[k],k,uniq_vals)
     elif isinstance(json_input, list):
+        print(json_input)
         for item in json_input:
             unnested_kv_generator(item,key,uniq_vals)
     else:
         if isinstance(json_input,str):
-            if json_input.lower() not in values_to_ignore:
+            if json_input.lower() not in meta_null_vals:
                 uniq_vals[key].add(json_input)
         else: # allow bools through
             uniq_vals[key].add(json_input)

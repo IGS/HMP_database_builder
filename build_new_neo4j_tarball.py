@@ -26,7 +26,7 @@ def main():
         if exception.errno != errno.EEXIST:
             raise
 
-    start_neo4j_docker = "docker run --name transient_neo4j --publish={0}:7474 --publish={1}:7687 --env=NEO4J_AUTH=none --volume={2}:/data neo4j:{3}".format(args.http,args.bolt,args.tmp_dir,args.neo4j_version)
+    start_neo4j_docker = "docker run --name transient_neo4j --publish={0}:7474 --publish={1}:7687 --env=NEO4J_AUTH=none --volume={2}:/data neo4j:{3}".format(args.http,args.bolt,args.out_dir,args.neo4j_version)
     neo4j = subprocess.Popen(start_neo4j_docker.split(),stdout=subprocess.PIPE)
 
     for line in iter(neo4j.stdout.readline,''):
