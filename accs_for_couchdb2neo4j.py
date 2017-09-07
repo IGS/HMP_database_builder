@@ -365,7 +365,7 @@ files_only = {
 # be explicit about which metadata makes it through the _attr nodes so as not
 # to be redundant with information like study_name
 meta_to_keep = {
-    'fecalcal'
+    'fecalcal',
     'fever',
     'fish',
     'fish_count',
