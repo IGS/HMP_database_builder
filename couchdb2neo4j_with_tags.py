@@ -480,7 +480,8 @@ def _standardize_value(value):
         if isinstance(value,bool):
             return str(value)
         else:
-            return value
+            if str(value).lower() not in meta_null_vals:
+                return value
     else:
         if value.lower() not in meta_null_vals:
             return value
