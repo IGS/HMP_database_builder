@@ -70,7 +70,6 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
                     page = { "status_code": 200, "content": page_content, "source": "cache" }
 
         if page is None:
-            print("making HTTP request for page %d" % pagenum)
             response = requests.get(db_url + "/_all_docs", params=params)
             page = { "status_code": response.status_code, "content": response.content, "source": "DB" }
             # write page to cache
