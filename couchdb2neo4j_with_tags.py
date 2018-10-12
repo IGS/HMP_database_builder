@@ -22,11 +22,10 @@
 #
 #-*-coding: utf-8-*-
 
-import time,sys,argparse,requests
+import argparse,gzip,json,os,requests,sys,time,urllib
 from py2neo import Graph
 from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
 from accs_for_couchdb2neo4j import files_only, meta_to_keep, meta_null_vals, keys_to_keep, ignore
-import json
 
 def _print_error(message):
     """
@@ -36,7 +35,7 @@ def _print_error(message):
     sys.stderr.flush()
 
 
-def _all_docs_by_page(db_url, page_size=10):
+def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
     """
     Helper function to request documents from CouchDB in batches ("pages") for
     efficiency, but present them as a stream.
@@ -48,19 +47,54 @@ def _all_docs_by_page(db_url, page_size=10):
     # Keep track of the last key we've seen
     last_key = None
 
+    # Create subdirectory to cache data retrieved from CouchDB.
+    # This is intended primarily for debugging/testing purposes.
+    cache_subdir = None
+    if cache_dir is not None:
+        # to keep things simple the cache will be page-size-specific
+        cache_subdir = os.path.join(cache_dir, urllib.quote_plus(db_url), str(page_size))
+        # create subdir if it does not exist
+        if not os.path.exists(cache_subdir):
+            os.makedirs(cache_subdir)
+
+    # retrieve a page from either the on-disk cache or the CouchDB server
+    def get_page(pagenum, params):
+        page = None
+        cache_page = None
+        # check cache for hit
+        if cache_subdir is not None:
+            cache_page = os.path.join(cache_subdir, ("p%010d" % pagenum) + ".json.gz")
+            if os.path.exists(cache_page):
+                with gzip.open(cache_page, 'rb') as cfile:
+                    page_content = cfile.read()
+                    page = { "status_code": 200, "content": page_content, "source": "cache" }
+
+        if page is None:
+            print("making HTTP request for page %d" % pagenum)
+            response = requests.get(db_url + "/_all_docs", params=params)
+            page = { "status_code": response.status_code, "content": response.content, "source": "DB" }
+            # write page to cache
+            if (cache_page is not None) and (response.status_code == 200):
+                with gzip.open(cache_page, 'wb') as cfile:
+                    cfile.write(response.content)
+        return page
+
+    pagenum = 1
+
     while True:
-        response = requests.get(db_url + "/_all_docs", params=view_arguments)
+        page = get_page(pagenum, params=view_arguments)
+        pagenum += 1
 
         # If there's been an error, stop looping
-        if response.status_code != 200:
-            _print_error("Error from DB: " + str(response.content))
+        if page['status_code'] != 200:
+            _print_error("Error from DB: " + str(page['content']))
             break
 
         # Parse the results as JSON. If there's an error, stop looping
         try:
-            results = json.loads(response.content)
+            results = json.loads(page['content'])
         except:
-            _print_error("Unable to parse JSON: " + str(response.content))
+            _print_error("Unable to parse JSON: " + str(page['content']))
             break
 
         # If there's no more data to read, stop looping
@@ -74,6 +108,7 @@ def _all_docs_by_page(db_url, page_size=10):
 
         # Note that CouchDB requires keys to be encoded as JSON
         view_arguments.update(startkey=json.dumps(last_key), skip=1)
+
 
 # All of these _build*_doc functions take in a particular "File" node (which)
 # means anything below the "Prep" nodes and build a document containing all
@@ -757,6 +792,10 @@ if __name__ == '__main__':
         help="The CouchDB database URL from which to load data")
 
     parser.add_argument(
+        '--cache_dir', type=str, required=False,
+        help="Directory in which to cache pages downloaded from CouchDB.")
+
+    parser.add_argument(
         "--page_size", type=int, default=1000,
         help="How many documents to request from CouchDB in each batch.")
 
@@ -829,7 +868,7 @@ if __name__ == '__main__':
         'abundance_matrix': {}
     }
 
-    for doc in _all_docs_by_page(args.db, args.page_size):
+    for doc in _all_docs_by_page(args.db, args.cache_dir, args.page_size):
         # Assume we don't want design documents, since they're likely to be
         # already stored elsewhere (e.g. in version control)
         if doc['id'].startswith("_design"):
