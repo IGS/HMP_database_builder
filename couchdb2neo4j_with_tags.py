@@ -26,6 +26,30 @@ import argparse,gzip,json,os,requests,sys,time,urllib
 from py2neo import Graph
 from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
 from accs_for_couchdb2neo4j import files_only, meta_to_keep, meta_null_vals, keys_to_keep, ignore
+import pprint
+import re
+
+# nodes without upstream SRS#
+NO_UPSTREAM_SRS = {}
+# unique tag terms
+TAGS = {}
+UNIQUE_LINKS = {}
+# node ids of inserted nodes
+NODE_IDS = {}
+# nodes to insert, grouped by type (e.g. 'file', 'tag', etc.)
+NODES = { 'file': [] , 'sample': [], 'subject': [], 'tag': [] }
+
+# cypher queries to perform link insertion
+SUBJ_SAMPLE_CYPHER = "UNWIND $objects as o MATCH (n1:subject{id: o.subject_id}),(n2:sample{id: o.sample_id}) MERGE (n1)<-[:extracted_from]-(n2)"
+FILE_TAG_CYPHER = "UNWIND $objects as o MATCH (n1:file{id: o.file_id}),(n2:tag{term: o.term}) MERGE (n2)<-[:has_tag]-(n1)"
+# "<PROPS>" indicates where the specific properties will be substituted in
+SAMPLE_FILE_CYPHER = "UNWIND $objects as o MATCH (n2:sample{id: o.sample_id}),(n3:file{id: o.file_id}) MERGE (n2)<-[d:derived_from{ <PROPS> }]-(n3)"
+
+NODE_LINKS = { 
+    'subject-sample': { 'cypher': SUBJ_SAMPLE_CYPHER, 'links': [] }, 
+    'file-tag': { 'cypher': FILE_TAG_CYPHER, 'links': [] },
+    'sample-file': { 'cypher': SAMPLE_FILE_CYPHER, 'links': [] },
+    }
 
 def _print_error(message):
     """
@@ -33,7 +57,6 @@ def _print_error(message):
     """
     sys.stderr.write(str(message) + "\n")
     sys.stderr.flush()
-
 
 def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
     """
@@ -47,17 +70,17 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
     # Keep track of the last key we've seen
     last_key = None
 
-    # Create subdirectory to cache data retrieved from CouchDB.
+    # Option to create subdirectory to cache data retrieved from CouchDB.
     # This is intended primarily for debugging/testing purposes.
     cache_subdir = None
     if cache_dir is not None:
         # to keep things simple the cache will be page-size-specific
         cache_subdir = os.path.join(cache_dir, urllib.quote_plus(db_url), str(page_size))
-        # create subdir if it does not exist
+        # create the subdir if it does not exist
         if not os.path.exists(cache_subdir):
             os.makedirs(cache_subdir)
 
-    # retrieve a page from either the on-disk cache or the CouchDB server
+    # retrieve a single page from either the on-disk cache or the CouchDB server
     def get_page(pagenum, params):
         page = None
         cache_page = None
@@ -80,6 +103,7 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
 
     pagenum = 1
 
+    # retrieve all CouchDB documents
     while True:
         page = get_page(pagenum, params=view_arguments)
         pagenum += 1
@@ -107,7 +131,6 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
 
         # Note that CouchDB requires keys to be encoded as JSON
         view_arguments.update(startkey=json.dumps(last_key), skip=1)
-
 
 # All of these _build*_doc functions take in a particular "File" node (which)
 # means anything below the "Prep" nodes and build a document containing all
@@ -436,7 +459,19 @@ def _isolate_relevant_prep_edge(doc):
                     if tag == srs_tag:
                         return prep_edge
 
-    print("SRS# cannot be found upstream for ID: {0}".format(doc['main']['id']))
+    subtype = doc['main']['subtype']
+    if subtype not in NO_UPSTREAM_SRS:
+        NO_UPSTREAM_SRS[subtype] = {}
+    NO_UPSTREAM_SRS[subtype][doc['main']['id']] = True
+
+    # certain nodes are expected to map to multiple upstream SRS ids:
+    #    wgs_assembled_seq_set/wgs_coassembly (for coassembled iHMP samples)
+    #    16s_trimmed_seq_set/trimmed_16s (for multiplexed JCVI samples)
+    if doc['main']['subtype'] != 'wgs_coassembly' and doc['main']['subtype'] != 'trimmed_16s':
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
+        sys.stdout.write("SRS# cannot be found upstream for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
+        pp.pprint(doc)
+
     return doc['prep'] # if we made it here, could not isolate upstream SRS
 
 # This function takes in the dict of nodes from a particular node type, the name
@@ -455,6 +490,13 @@ def _find_upstream_node(node_dict,node_name,link_id):
 # This function collects sample-project nodes as these can consistently be
 # retrieved in a similar manner.
 def _collect_sample_through_project(all_nodes_dict,doc):
+
+    # debug missing preps
+    if 'prep' not in doc:
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
+        sys.stdout.write("prep not found for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
+        pp.pprint(doc)
+        return None
 
     doc['sample'] = _find_upstream_node(all_nodes_dict['sample'],'sample',doc['prep']['linkage']['prepared_from'])
     doc['visit'] = _find_upstream_node(all_nodes_dict['visit'],'visit',doc['sample']['linkage']['collected_during'])
@@ -580,11 +622,17 @@ def _build_constraint_index(node,prop,cy):
 # Build indexes for searching on all the props that aren't ID. Takes which node
 # to build all indexes on as well as the Neo4j connection.
 def _build_all_indexes(node,cy):
+    stime = time.time()
     result = cy.run("MATCH (n:{0}) WITH DISTINCT keys(n) AS keys UNWIND keys AS keyslisting WITH DISTINCT keyslisting AS allfields RETURN allfields".format(node))
+    n_indexes = 0
     for x in result:
         prop = x['allfields']
         if prop != 'id':
+#            _print_error("indexing {0}({1})".format(node,prop))
             cy.run("CREATE INDEX ON :{0}(`{1}`)".format(node,prop))
+            n_indexes += 1
+    etime = time.time()
+    _print_error("built {0} {1} indexes in {2:.2f} second(s)".format(n_indexes, node, etime-stime))
 
 # Escape quotes to keep Cypher happy
 def _mod_quotes(val):
@@ -629,7 +677,7 @@ def _traverse_document(doc,focal_node,index):
 
         if isinstance(val, int) or isinstance(val, float):
             key = key.encode('utf-8')
-            props.append('`{0}{1}`:{2}'.format(key_prefix,key,val))
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': False })
         elif isinstance(val, list): # lists should be urls, contacts, and tags
             for j in range(0,len(val)):
 
@@ -643,44 +691,62 @@ def _traverse_document(doc,focal_node,index):
                             email = vals
                             break
                     if email:
-                        props.append('`{0}contact`:"{1}"'.format(key_prefix,email))
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(email), 'quoted': True })
                         break
                     else:
-                        props.append('`{0}contact`:"{1}"'.format(key_prefix,val[j]))
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(val[j]), 'quoted': True })
                         break
 
                 else:
                     endpoint = val[j].split(':')[0]
-                    props.append('`{0}{1}`:"{2}"'.format(key_prefix,endpoint,val[j]))
+                    props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]), 'quoted': True })
         else:
             val = _mod_quotes(val)
             key = key.encode('utf-8')
             val = val.encode('utf-8')
-            props.append('`{0}{1}`:"{2}"'.format(key_prefix,key,val))
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': True })
 
         if key == "id":
             doc_id = val
 
     if focal_node == 'main': # missing file formats will default to text files (only true so far for lipidome)
         format_present = False
-        for prop in props:
-            if '`format`:' in prop:
+        for p in props:
+            if p['key'] == 'format':
                 format_present = True
                 break
 
         if not format_present:
-            props.append('`format`:"Text"')
+            props.append({'key': 'format', 'value': 'Text', 'quoted': True })
 
-    props_str = (',').join(props)
+    # remove empty properties and apply rewrites
+    new_props = []
+    new_prop_strs = []
+    for prop in props:
+        if (prop['key'] is None or prop['key'] == ""):
+            continue
+
+        # change syntax for file format and node_type
+        if focal_node == 'main' and prop['key'] == 'format':
+            for v1,v2 in file_format_dict.items():
+                if prop['value'] == v1:
+                    prop['value'] = v2
+                    break
+
+        new_props.append(prop)
+        if prop['quoted']:
+            new_prop_strs.append('`{0}`:"{1}"'.format(prop['key'], prop['value']))
+        else:
+            new_prop_strs.append('`{0}`:{1}'.format(prop['key'], prop['value']))
+
+    props = new_props
+    props_str = (',').join(new_prop_strs)
+
     # Some formatting to get rid of empty key:value pairs
-    props_str = props_str.replace('``:""','')
-    props_str = props_str.replace(',,',',')
+#    props_str = props_str.replace('``:""','')
+#    props_str = props_str.replace(',,',',')
 
-    if focal_node == 'main': # change syntax for file format and node_type
-        for k,v in file_format_dict.items():
-            props_str = props_str.replace('`format`:"{0}"'.format(k),'`format`:"{0}"'.format(v))
-
-    return {'id':doc_id,'tag_list':tags,'prop_str':props_str}
+    return {'id':doc_id,'tag_list':tags,'prop_str':props_str,'props':props}
 
 def _add_unique_tags(th, tl):
     if isinstance(tl, basestring):
@@ -693,30 +759,52 @@ def _add_unique_tags(th, tl):
 # Takes in a list of Cypher statements and builds on it. The index value
 # differentiates a node with multiple upstream compared to one with single upstream.
 def _generate_cypher(doc,index):
-
     cypher = []
 
     all_tags = {}
 
     file_info = _traverse_document(doc,'main','') # file is never a list, so never has an index
-    props = "{0}".format(file_info['prop_str'])
-    cypher.append("MERGE (node:file {{ {0} }})".format(props))
+    if file_info['id'] not in NODE_IDS:
+        NODE_IDS[file_info['id']] = True
+        NODES['file'].append({'_props': file_info['props']})
 
     sample_info = _traverse_document(doc,'sample',index)
     visit_info = _traverse_document(doc,'visit',index)
     study_info = _traverse_document(doc,'study',index)
-    props = "{0},{1},{2}".format(sample_info['prop_str'],visit_info['prop_str'],study_info['prop_str'])
-    cypher.append("MERGE (node:sample {{ {0} }})".format(props))
+    sample_props = sample_info['props']
+    sample_props.extend(visit_info['props'])
+    sample_props.extend(study_info['props'])
+    if sample_info['id'] not in NODE_IDS:
+        NODE_IDS[sample_info['id']] = True
+        NODES['sample'].append({'_props': sample_props})
 
     subject_info = _traverse_document(doc,'subject',index)
     project_info = _traverse_document(doc,'project',index)
+    subject_props = subject_info['props']
+    subject_props.extend(project_info['props'])
     props = "{0},{1}".format(subject_info['prop_str'],project_info['prop_str'])
-    cypher.append("MERGE (node:subject {{ {0} }})".format(props))
+    if subject_info['id'] not in NODE_IDS:
+        NODE_IDS[subject_info['id']] = True
+        NODES['subject'].append({'_props': subject_props})
 
     prep_info = _traverse_document(doc,'prep',index)
 
-    cypher.append("MATCH (n1:subject{{id:'{0}'}}),(n2:sample{{id:'{1}'}}) MERGE (n1)<-[:extracted_from]-(n2)".format(subject_info['id'],sample_info['id']))
-    cypher.append("MATCH (n2:sample{{id:'{0}'}}),(n3:file{{id:'{1}'}}) MERGE (n2)<-[d:derived_from{{{2}}}]-(n3)".format(sample_info['id'],file_info['id'],prep_info['prop_str']))
+    # subject(id) <-[:extracted_from]-(n2) sample(id)
+    lkey = ":".join([subject_info['id'], sample_info['id']])
+    if lkey not in UNIQUE_LINKS:
+        subj_sample_link = { 'subject_id': subject_info['id'], 'sample_id': sample_info['id'] }
+        NODE_LINKS['subject-sample']['links'].append(subj_sample_link)
+        UNIQUE_LINKS[lkey] = True
+
+    # add sample - file link
+    # sample(id) <-[:derived_from]-(n3) file(id) -> derived_from has associated properties
+    lkey = ":".join([sample_info['id'], file_info['id']])
+    if lkey not in UNIQUE_LINKS:
+        sample_file_link = { 'sample_id': sample_info['id'], 'file_id': file_info['id'], '_props': prep_info['props'] }
+        NODE_LINKS['sample-file']['links'].append(sample_file_link)
+        UNIQUE_LINKS[lkey] = True
+    else:
+        _print_error("duplicate link wit lkey=" + lkey)
 
     # flatten lists of lists, uniquifying as we go
     _add_unique_tags(all_tags, file_info['tag_list'])
@@ -727,19 +815,26 @@ def _generate_cypher(doc,index):
     _add_unique_tags(all_tags, study_info['tag_list'])
     _add_unique_tags(all_tags, project_info['tag_list'])
 
-    unique_tags = []
-    for k in all_tags:
-        unique_tags.append(k)
+    for tag in all_tags:
+        if ":" in tag:
+            tag = tag.split(':',1)[1] # don't trim URLs and the like (e.g. http:)
+            tag = tag.strip()
+        if tag: # if there's something there, attach
+            if tag.isspace():
+                continue
 
-        for tag in unique_tags:
-            if ":" in tag:
-                tag = tag.split(':',1)[1] # don't trim URLs and the like (e.g. http:)
-                tag = tag.strip()
-            if tag: # if there's something there, attach
-                if tag.isspace():
-                    continue
-                cypher.append('MERGE (n:tag{{term:"{0}"}})'.format(tag))
-                cypher.append('MATCH (n1:file{{id:"{0}"}}),(n2:tag{{term:"{1}"}}) MERGE (n2)<-[:has_tag]-(n1)'.format(file_info['id'],tag))
+            # file(id) <-[:has_tag]- tag(term)
+            # add tag link if it hasn't already been added
+            tlkey = ":".join([file_info['id'], tag])
+            if tlkey not in UNIQUE_LINKS:
+                tag_link = { 'file_id': file_info['id'], 'term': tag }
+                NODE_LINKS['file-tag']['links'].append(tag_link)
+                UNIQUE_LINKS[tlkey] = True
+
+            # add tag if it hasn't already been seen
+            if tag not in TAGS:
+                TAGS[tag] = tag_link
+                NODES['tag'].append({'_props': [{'key': 'term', 'value': tag, 'quoted': True}]})
 
     return cypher
 
@@ -770,7 +865,7 @@ def _delete_keys_from_dict(doc_dict):
         if not val or not key:
             delete_us.append(key)
 
-        # Unfortunately... have to check for keys comprised of blanks paces
+        # Unfortunately... have to check for keys comprised of blank spaces
         if len(key.replace(' ','')) == 0:
             delete_us.append(key)
 
@@ -779,12 +874,107 @@ def _delete_keys_from_dict(doc_dict):
 
     return doc_dict
 
+# Insert an element (n) into a dict (d) of lists indexed by key (k)
+def _add_to_group(d, n, k):
+    if k in d:
+        d[k].append(n)
+    else:
+        d[k] = [n]
+    
+# Concatenate the properties of a node/edge to determine its signature.
+def _get_properties_sig(node):
+    return "||".join(sorted([p['key'] for p in node]))
 
+# Generic Cypher insert function that makes use of UNWIND to perform fast
+# batch inserts (with batch size set by args.batch_size.) 
+#
+# cy - Cypher Graph
+# insert_cypher - Cypher UNWIND query to insert data. It may contain the string "<PROPS>".
+# obj_list - List of objects (nodes or links/edges) to insert. This is a list of dicts 
+#   that defines the attributes/fields referenced in insert_cypher. If insert_cypher 
+#   contains the string "<PROPS>" then each dict must have a '_props' field mapping to
+#   a list of { 'key': property_key, 'value': property_value, 'quoted' }.
+# obj_type - Type of object ('node' or 'link') to be inserted. Used only to print a 
+#   status message.
+#
+# When the insert_cypher contains the string "<PARAMS>" the function will 
+# substitute in the actual parameter list based on the '_params' defined by
+# each object in obj_list. Note that the objects need not all define the 
+# same '_params': the fuction automatically groups the objects so that those
+# with the same parameter signature are inserted together (allowing the use 
+# of a single Cypher query for each such group of objects.) This significantly
+# improves the speed at which inserts can be processed.
+#
+def _do_cypher_insert(cy, insert_cypher, obj_list, obj_type):
+    stime = time.time()
+    sig_to_objs = {}
+
+    # case 1: there are properties associated with the new nodes or links, 
+    # indicated by the presence of "<PROPS>" in the cypher query
+    if re.search(r'<PROPS>', insert_cypher):
+        for obj in obj_list:
+            props = obj['_props']
+            sig = _get_properties_sig(props)
+            _add_to_group(sig_to_objs, obj, sig)
+    
+    # case 2: there are no properties associated with the new nodes or links
+    else:
+        sig_to_objs[''] = obj_list
+
+    # group updates by property signature
+    for sig in sorted(sig_to_objs.keys()):
+        o_list = sig_to_objs[sig]
+        n_objs = len(o_list)
+
+        # create cypher query by substituting in the actual property list
+        props_cypher = ", ".join(["`" + p + "`: o.`" + p + "`" for p in sig.split("||")])
+        ins_cypher = re.sub(r'<PROPS>', props_cypher, insert_cypher)
+
+        # create list of dicts to pass to Neo4J driver
+        # note that creating a new list is significantly faster than trying to reuse
+        # the existing one due to the overhead of the existing _props list.
+        new_o_list = []
+        for obj in o_list:
+            new_obj = {}
+            for k in obj:
+                if k == '_props':
+                    for p in obj['_props']:
+                        new_obj[p['key']] = p['value']
+                else:
+                    new_obj[k] = obj[k]
+            new_o_list.append(new_obj)
+
+        # do batched inserts with batch size = args.batch_size
+        for start in range(0, n_objs, args.batch_size):
+            stop = start + args.batch_size
+            if stop > n_objs:
+                stop = n_objs
+            tx = cy.begin()
+            o_slice = new_o_list[start:stop]
+            tx.run(ins_cypher, { 'objects': o_slice })
+            tx.commit()
+
+    etime = time.time()
+    _print_error("inserted {0} {1} in {2:.2f} second(s)".format(len(obj_list), obj_type, etime-stime))
+
+# Use generic Cypher insert function to insert new nodes with properties.
+def _insert_nodes(cy, node_type):
+    insert_cypher =  "UNWIND $objects as o MERGE (n:" + node_type + "{ <PROPS> })"
+    node_list = NODES[node_type]
+    _do_cypher_insert(cy, insert_cypher, node_list, node_type + " nodes")
+
+# Use generic Cypher insert function to insert new links/edges, either with or without properties.
+def _insert_links(cy, link_type):
+    links = NODE_LINKS[link_type]
+    l_cypher = links['cypher']
+    l_list = links['links']
+    _do_cypher_insert(cy, l_cypher, l_list, link_type + " links")
+    
 if __name__ == '__main__':
 
     # Set up an ArgumentParser to read the command-line
     parser = argparse.ArgumentParser(
-        description="Dump documents out of CouchDB to the filesystem")
+        description="Convert OSDF documents from CouchDB to Neo4J in the format expected by the data portal")
 
     parser.add_argument(
         '--db', type=str,
@@ -792,7 +982,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--cache_dir', type=str, required=False,
-        help="Directory in which to cache pages downloaded from CouchDB.")
+        help="Directory in which to cache/find pages downloaded from CouchDB (optional - used for testing).")
 
     parser.add_argument(
         "--page_size", type=int, default=1000,
@@ -811,7 +1001,7 @@ if __name__ == '__main__':
         help="The port for the exposed bolt location")
 
     parser.add_argument(
-        "--batch_size", type=int, default=500,
+        "--batch_size", type=int, default=5000,
         help="The batch size for Cypher statements to be committed")
 
     args = parser.parse_args()
@@ -864,8 +1054,20 @@ if __name__ == '__main__':
         'metabolome': {},
         'lipidome': {},
         'cytokine': {},
-        'abundance_matrix': {}
+        'abundance_matrix': {},
+
+        # new node types added 10/22/2018
+        'reference_genome_project_catalog_entry' : {}, # : 3060
+        'host_epigenetics_raw_seq_set' : {}, # : 960
+        'serology' : {}, # : 211
+        'metagenomic_project_catalog_entry' : {}, # : 1265
+        'alignment' : {}, # 5917
+        'proteome_nonpride': {}, # 76
+        'host_variant_call': {} # 93
     }
+
+    # count skipped nodes and print a summary at the end
+    node_skip_counts = {}
 
     for doc in _all_docs_by_page(args.db, args.cache_dir, args.page_size):
         # Assume we don't want design documents, since they're likely to be
@@ -961,7 +1163,11 @@ if __name__ == '__main__':
                 nodes[doc['doc']['node_type']][doc['id']] = doc
 
         else:
-            print("Warning, skipping node with type: {0}".format(doc['doc']['node_type']))
+            node_type = doc['doc']['node_type']
+            if node_type in node_skip_counts:
+                node_skip_counts[node_type] += 1
+            else:
+                node_skip_counts[node_type] = 1
 
         # no-op ?
         key = counter
@@ -973,6 +1179,11 @@ if __name__ == '__main__':
 
     # build a list of all Cypher statements to build the entire DB
     cypher_statements = []
+
+    sys.stdout.write("skipped node counts:\n")
+    for node_type in node_skip_counts:
+        count = node_skip_counts[node_type]
+        sys.stdout.write("  {0} : {1}\n".format(node_type, str(count)))
 
     for key in nodes:
 
@@ -1022,51 +1233,46 @@ if __name__ == '__main__':
                     if id not in ignore:
                         cypher_statements += _generate_cypher_statements(_build_clustered_seq_set_doc(nodes, nodes[key][id]))
 
-    # Build a list of unique elements so that the number of calls to Neo4j are
-    # reduced. This should help greatly with how many tags are present per node
-    # especially. Can't use set because we must maintain order.
-    unique_cypher = set()
-    final_statements = []
-    for cypher in cypher_statements:
-        if cypher not in unique_cypher and cypher != '':
-            final_statements.append(cypher)
-            unique_cypher.add(cypher)
+    # report nodes without upstream SRS ids
+    sys.stdout.write("nodes without upstream SRS ids:\n")
+    for subtype in NO_UPSTREAM_SRS:
+        count = len(NO_UPSTREAM_SRS[subtype])
+        sys.stdout.write("  {0} : {1}\n".format(subtype, str(count)))
 
-    cypher_statements = final_statements
+    # insert nodes (this order appears to yield the best performance):
+    _insert_nodes(cy, 'subject')
+    _insert_nodes(cy, 'sample')
+    _insert_nodes(cy, 'file')
+    _insert_nodes(cy, 'tag')
 
-    # Send Cypher in transactions with a number of statements sent at a time
-    # equal to args.batch_size
-    for j in range(0, len(cypher_statements), args.batch_size):
+    # index files and tagsbefore inserting file - tag links
+    _build_all_indexes('file',cy)
+    _build_constraint_index('tag','term',cy)
 
-        start = j
-        stop = j+args.batch_size
-
-        if stop > len(cypher_statements):
-            stop = len(cypher_statements)
-
-        tx = cy.begin()
-
-        # know everything has to pass through here, so take advantage and do
-        # blanket syntax corrections
-        for pos in range(start,stop):
-            #statement = cypher_statements[pos]
-            #for k,v in syntax_dict.items():
-                #statement = statement.replace(k,v)
-            tx.append(cypher_statements[pos])
-
-        tx.commit()
-
+    # insert tag links
+    _insert_links(cy, 'file-tag')
+    # insert subject-sample links
+    _insert_links(cy, 'subject-sample')
+    # insert sample-file links
+    _insert_links(cy, 'sample-file')
+        
     # Here set some better syntax for the portal and override the original OSDF values
+    stime = time.time()
     cy.run('MATCH (n:sample) SET n.study_full_name=n.study_name')
+    _print_error("updated study full names in {0:.2f} second(s)".format(time.time() - stime))
+
+    stime = time.time()
     for old, new in study_name_dict.items():
         cy.run('MATCH (n:sample) WHERE n.study_name="{0}" SET n.study_name="{1}"'.format(old,new))
+    _print_error("updated study names in {0:.2f} second(s)".format(time.time() - stime))
+
+    stime = time.time()
     cy.run("MATCH (PSS:subject) WHERE PSS.project_name = 'iHMP' SET PSS.project_name = 'Integrative Human Microbiome Project'")
+    _print_error("updated project name in {0:.2f} second(s)".format(time.time() - stime))
 
     # Now build indexes on each unique property found in this newest data set
     _build_all_indexes('subject',cy)
     _build_all_indexes('sample',cy)
-    _build_all_indexes('file',cy)
 
     # A little final message
-    sys.stderr.write("Done! {0} documents in {1} seconds!\n".format(
-        counter, time.time() - start_time))
+    _print_error("Done! converted {0} CouchDB documents in {1} seconds!\n".format(counter, time.time() - start_time))
