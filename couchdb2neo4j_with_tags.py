@@ -799,12 +799,27 @@ def _generate_cypher(doc,index):
     # add sample - file link
     # sample(id) <-[:derived_from]-(n3) file(id) -> derived_from has associated properties
     lkey = ":".join([sample_info['id'], file_info['id']])
-    if lkey not in UNIQUE_LINKS:
-        sample_file_link = { 'sample_id': sample_info['id'], 'file_id': file_info['id'], '_props': prep_info['props'] }
-        NODE_LINKS['sample-file']['links'].append(sample_file_link)
-        UNIQUE_LINKS[lkey] = True
-    else:
-        _print_error("duplicate link wit lkey=" + lkey)
+
+    # checking uniqueness of sample-file links is expensive because the link properties (minus 'id') must be examined:
+    if args.check_sample_file_uniqueness:
+        prop_list = sorted(x for x in prep_info['props'] if x['key'] != 'id')
+        pp = pprint.PrettyPrinter(indent=2)
+        props_str = pp.pformat(prop_list)
+
+        if lkey in UNIQUE_LINKS:
+            # dict of sorted PrettyPrinted properties seen thus far
+            props_d = UNIQUE_LINKS[lkey]
+
+            # link is an exact duplicate
+            if props_str in props_d:
+                _print_error("INFO - duplicate link with lkey=" + lkey + " and identical properties")
+            else:
+                props_d[props_str] = True
+        else:
+            UNIQUE_LINKS[lkey] = { props_str: True }
+
+    sample_file_link = { 'sample_id': sample_info['id'], 'file_id': file_info['id'], '_props': prep_info['props'] }
+    NODE_LINKS['sample-file']['links'].append(sample_file_link)
 
     # flatten lists of lists, uniquifying as we go
     _add_unique_tags(all_tags, file_info['tag_list'])
@@ -1003,6 +1018,10 @@ if __name__ == '__main__':
     parser.add_argument(
         "--batch_size", type=int, default=5000,
         help="The batch size for Cypher statements to be committed")
+
+    parser.add_argument(
+        "--check_sample_file_uniqueness", dest="check_sample_file_uniqueness", action="store_true",
+        help="Check sample-file links for uniqueness. Slower because the properties must be checked.")
 
     args = parser.parse_args()
 
