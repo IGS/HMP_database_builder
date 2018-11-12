@@ -258,6 +258,10 @@ def _build_abundance_matrix_doc(all_nodes_dict,node):
 
         doc['prep'] = _find_upstream_node(all_nodes_dict[which_prep],which_prep,link)
 
+    else:
+        # create dummy prep for abundance matrix computed_from a study
+        doc['prep'] = {}
+
     return _collect_sample_through_project(all_nodes_dict,doc)
 
 def _build_omes_doc(all_nodes_dict,node):
@@ -498,18 +502,24 @@ def _collect_sample_through_project(all_nodes_dict,doc):
         pp.pprint(doc)
         return None
 
-    doc['sample'] = _find_upstream_node(all_nodes_dict['sample'],'sample',doc['prep']['linkage']['prepared_from'])
-    doc['visit'] = _find_upstream_node(all_nodes_dict['visit'],'visit',doc['sample']['linkage']['collected_during'])
-    doc['subject'] = _find_upstream_node(all_nodes_dict['subject'],'subject',doc['visit']['linkage']['by'])
-    doc['study'] = _find_upstream_node(all_nodes_dict['study'],'study',doc['subject']['linkage']['participates_in'])
-    doc['project'] = _find_upstream_node(all_nodes_dict['project'],'project',doc['study']['linkage']['part_of'])
+
+    # some abundance matrices are computed_from the study rather than a specific sample/prep
+    if doc['main']['node_type'] == 'abundance_matrix' and 'linkage' not in doc['prep']:
+        doc['study'] = _find_upstream_node(all_nodes_dict['study'],'study',doc['main']['linkage']['computed_from'])
+        doc['project'] = _find_upstream_node(all_nodes_dict['project'],'project',doc['study']['linkage']['part_of'])
+    else:
+        doc['sample'] = _find_upstream_node(all_nodes_dict['sample'],'sample',doc['prep']['linkage']['prepared_from'])
+        doc['visit'] = _find_upstream_node(all_nodes_dict['visit'],'visit',doc['sample']['linkage']['collected_during'])
+        doc['subject'] = _find_upstream_node(all_nodes_dict['subject'],'subject',doc['visit']['linkage']['by'])
+        doc['study'] = _find_upstream_node(all_nodes_dict['study'],'study',doc['subject']['linkage']['participates_in'])
+        doc['project'] = _find_upstream_node(all_nodes_dict['project'],'project',doc['study']['linkage']['part_of'])
 
     # Skip all the dummy data associated with the "Test Project"
     if doc['project']['id'] == '610a4911a5ca67de12cdc1e4b40018e1':
         return None
-    else:
+    elif 'prep' in doc:
         doc = _append_attribute_data(all_nodes_dict,doc)
-        return doc
+    return doc
 
 # This function appends attribute data to the current node doc type.
 # Note this will only occur if there is such data available. Takes
@@ -522,6 +532,8 @@ def _append_attribute_data(all_nodes_dict,doc):
         if attr in all_nodes_dict: # only act if attr data is present
 
             node_to_add_to = attr.split('_')[0]
+            if node_to_add_to not in doc:
+                continue
 
             if type(doc[node_to_add_to]) is list:
                 for x in range(0,len(doc[node_to_add_to])):
@@ -666,6 +678,9 @@ def _traverse_document(doc,focal_node,index):
     if focal_node not in ['subject','sample','main','prep']: # main is equivalent to file since a single doc represents a single file
         key_prefix = "{0}_".format(focal_node)
 
+    if focal_node not in doc:
+        return {'id':doc_id,'tag_list':tags,'prop_str':"",'props':props}
+
     if index == '':
         relevant_doc = doc[focal_node]
     else:
@@ -741,10 +756,6 @@ def _traverse_document(doc,focal_node,index):
 
     props = new_props
     props_str = (',').join(new_prop_strs)
-
-    # Some formatting to get rid of empty key:value pairs
-#    props_str = props_str.replace('``:""','')
-#    props_str = props_str.replace(',,',',')
 
     return {'id':doc_id,'tag_list':tags,'prop_str':props_str,'props':props}
 
