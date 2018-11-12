@@ -471,7 +471,10 @@ def _isolate_relevant_prep_edge(doc):
     # certain nodes are expected to map to multiple upstream SRS ids:
     #    wgs_assembled_seq_set/wgs_coassembly (for coassembled iHMP samples)
     #    16s_trimmed_seq_set/trimmed_16s (for multiplexed JCVI samples)
-    if doc['main']['subtype'] != 'wgs_coassembly' and doc['main']['subtype'] != 'trimmed_16s':
+    #    wgs_assembled_seq_set/wgs_assembly for body-site-specific assemblies
+    if ((doc['main']['subtype'] != 'wgs_coassembly' and doc['main']['subtype'] != 'trimmed_16s') 
+        and
+        (doc['main']['subtype'] != 'wgs_assembly' and doc['main']['name'] != "Body-site specific assemblies")):
         pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
         sys.stdout.write("SRS# cannot be found upstream for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
         pp.pprint(doc)
