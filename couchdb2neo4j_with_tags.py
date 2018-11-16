@@ -25,7 +25,7 @@
 import argparse,gzip,json,os,requests,sys,time,urllib
 from py2neo import Graph
 from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
-from accs_for_couchdb2neo4j import files_only, meta_to_keep, meta_null_vals, keys_to_keep, ignore
+from accs_for_couchdb2neo4j import file_nodes, meta_to_keep, meta_null_vals, keys_to_keep, ignore
 import pprint
 import re
 
@@ -45,6 +45,7 @@ FILE_TAG_CYPHER = "UNWIND $objects as o MATCH (n1:file{id: o.file_id}),(n2:tag{t
 # "<PROPS>" indicates where the specific properties will be substituted in
 SAMPLE_FILE_CYPHER = "UNWIND $objects as o MATCH (n2:sample{id: o.sample_id}),(n3:file{id: o.file_id}) MERGE (n2)<-[d:derived_from{ <PROPS> }]-(n3)"
 
+# track node links/edges to insert
 NODE_LINKS = { 
     'subject-sample': { 'cypher': SUBJ_SAMPLE_CYPHER, 'links': [] }, 
     'file-tag': { 'cypher': FILE_TAG_CYPHER, 'links': [] },
@@ -384,6 +385,43 @@ def _build_annotation_doc(all_nodes_dict,node):
 
     return _collect_sample_through_project(all_nodes_dict,doc)
 
+def _build_alignment_or_host_variant_call_doc(all_nodes_dict,node):
+
+    doc = {}
+    which_upstream,which_prep = ("" for i in range(2))
+
+    doc['main'] = node['doc']
+
+    link = _refine_link(doc['main']['linkage']['computed_from'])
+
+    if link in all_nodes_dict['wgs_assembled_seq_set']:
+        which_upstream = 'wgs_assembled_seq_set'
+        doc[which_upstream] = _find_upstream_node(all_nodes_dict[which_upstream],which_upstream,link)
+        link = _refine_link(doc[which_upstream]['linkage']['computed_from'])
+
+    if link in all_nodes_dict['wgs_raw_seq_set']:
+        which_upstream = 'wgs_raw_seq_set'
+    elif link in all_nodes_dict['wgs_raw_seq_set_private']:
+        which_upstream = 'wgs_raw_seq_set_private'
+    elif link in all_nodes_dict['host_wgs_raw_seq_set']:
+        which_upstream = 'host_wgs_raw_seq_set'
+    else:
+        _print_error("can't find upstream type for " + link)
+
+    doc[which_upstream] = _find_upstream_node(all_nodes_dict[which_upstream],which_upstream,link)
+    link = _refine_link(doc[which_upstream]['linkage']['sequenced_from'])
+
+    if link in all_nodes_dict['wgs_dna_prep']:
+        which_prep = 'wgs_dna_prep'
+    elif link in all_nodes_dict['host_seq_prep']:
+        which_prep = 'host_seq_prep'
+    else:
+        print("Made it here, so an WGS/HOST node is missing an upstream ID of {0}.".format(link))
+
+    doc['prep'] = _find_upstream_node(all_nodes_dict[which_prep],which_prep,link)
+
+    return _collect_sample_through_project(all_nodes_dict,doc)
+
 def _build_clustered_seq_set_doc(all_nodes_dict,node):
 
     doc = {}
@@ -504,7 +542,6 @@ def _collect_sample_through_project(all_nodes_dict,doc):
         sys.stdout.write("prep not found for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
         pp.pprint(doc)
         return None
-
 
     # some abundance matrices are computed_from the study rather than a specific sample/prep
     if doc['main']['node_type'] == 'abundance_matrix' and 'linkage' not in doc['prep']:
@@ -643,7 +680,6 @@ def _build_all_indexes(node,cy):
     for x in result:
         prop = x['allfields']
         if prop != 'id':
-#            _print_error("indexing {0}({1})".format(node,prop))
             cy.run("CREATE INDEX ON :{0}(`{1}`)".format(node,prop))
             n_indexes += 1
     etime = time.time()
@@ -1090,13 +1126,13 @@ if __name__ == '__main__':
         'abundance_matrix': {},
 
         # new node types added 10/22/2018
-        'reference_genome_project_catalog_entry' : {}, # : 3060
-        'host_epigenetics_raw_seq_set' : {}, # : 960
-        'serology' : {}, # : 211
-        'metagenomic_project_catalog_entry' : {}, # : 1265
-        'alignment' : {}, # 5917
-        'proteome_nonpride': {}, # 76
-        'host_variant_call': {} # 93
+        'reference_genome_project_catalog_entry' : {},
+        'host_epigenetics_raw_seq_set' : {},
+        'serology' : {},
+        'metagenomic_project_catalog_entry' : {},
+        'alignment' : {},
+        'proteome_nonpride': {},
+        'host_variant_call': {}
     }
 
     # count skipped nodes and print a summary at the end
@@ -1220,8 +1256,8 @@ if __name__ == '__main__':
 
     for key in nodes:
 
-        if key in files_only:
-
+        if key in file_nodes:
+            
             if key == "16s_raw_seq_set":
                 for id in nodes[key]:
                     if id not in ignore:
@@ -1232,7 +1268,7 @@ if __name__ == '__main__':
                     if id not in ignore:
                         cypher_statements += _generate_cypher_statements(_build_16s_trimmed_seq_set_doc(nodes, nodes[key][id]))
 
-            elif key.endswith("ome") or key == "cytokine":
+            elif key.endswith("ome") or key == "cytokine" or key == "proteome_nonpride" or key == "serology":
                 for id in nodes[key]:
                     if id not in ignore:
                         cypher_statements += _generate_cypher_statements(_build_omes_doc(nodes, nodes[key][id]))
@@ -1246,6 +1282,7 @@ if __name__ == '__main__':
                 key == "wgs_raw_seq_set" or key == "wgs_raw_seq_set_private"
                 or key == "host_wgs_raw_seq_set" or key == "host_transcriptomics_raw_seq_set"
                 or key == "microb_transcriptomics_raw_seq_set"
+                or key == "host_epigenetics_raw_seq_set"
                 ):
                 for id in nodes[key]:
                     if id not in ignore:
@@ -1265,6 +1302,14 @@ if __name__ == '__main__':
                 for id in nodes[key]:
                     if id not in ignore:
                         cypher_statements += _generate_cypher_statements(_build_clustered_seq_set_doc(nodes, nodes[key][id]))
+
+            elif key == "alignment" or key == "host_variant_call":
+                for id in nodes[key]:
+                    if id not in ignore:
+                        cypher_statements += _generate_cypher_statements(_build_alignment_or_host_variant_call_doc(nodes, nodes[key][id]))
+                
+            elif not re.search(r'_prep$', key):
+                _print_error("skipping {0} File nodes of type {1}".format(len(nodes[key]), key))
 
     # report nodes without upstream SRS ids
     sys.stdout.write("nodes without upstream SRS ids:\n")
