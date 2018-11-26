@@ -668,8 +668,11 @@ def _refine_link(linkage):
 
 # Build indexes for the three node types and their IDs that guarantee UNIQUEness
 def _build_constraint_index(node,prop,cy):
+    stime = time.time()
     cstr = "CREATE CONSTRAINT ON (x:{0}) ASSERT x.{1} IS UNIQUE".format(node,prop)
     cy.run(cstr)
+    etime = time.time()
+    _print_error("built unique constraint index on {0}.{1} in {2:.2f} second(s)".format(node, prop, etime-stime))
 
 # Build indexes for searching on all the props that aren't ID. Takes which node
 # to build all indexes on as well as the Neo4j connection.
@@ -1054,7 +1057,11 @@ if __name__ == '__main__':
         help="How many documents to request from CouchDB in each batch.")
 
     parser.add_argument(
-        "--neo4j_password", type=str, default="neo4j",
+        "--neo4j_host", type=str, default="localhost",
+        help="The Neo4j server hostname")
+
+    parser.add_argument(
+        "--neo4j_password", type=str, default=None,
         help="The password for Neo4j")
 
     parser.add_argument(
@@ -1074,8 +1081,7 @@ if __name__ == '__main__':
         help="Check sample-file links for uniqueness. Slower because the properties must be checked.")
 
     args = parser.parse_args()
-
-    cy = Graph(password = args.neo4j_password, bolt_port = args.bolt_port, http_port = args.http_port)
+    cy = Graph(host = args.neo4j_host, password = args.neo4j_password, bolt_port = args.bolt_port, http_port = args.http_port) 
 
     _build_constraint_index('subject','id',cy)
     _build_constraint_index('sample','id',cy)
@@ -1322,10 +1328,6 @@ if __name__ == '__main__':
     _insert_nodes(cy, 'sample')
     _insert_nodes(cy, 'file')
     _insert_nodes(cy, 'tag')
-
-    # index files and tagsbefore inserting file - tag links
-    _build_all_indexes('file',cy)
-    _build_constraint_index('tag','term',cy)
 
     # insert tag links
     _insert_links(cy, 'file-tag')
