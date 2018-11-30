@@ -734,7 +734,7 @@ def _traverse_document(doc,focal_node,index):
 
         if isinstance(val, int) or isinstance(val, float):
             key = key.encode('utf-8')
-            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': False })
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val, 'quoted': False })
         elif isinstance(val, list): # lists should be urls, contacts, and tags
             for j in range(0,len(val)):
 
@@ -791,10 +791,7 @@ def _traverse_document(doc,focal_node,index):
                     break
 
         new_props.append(prop)
-        if prop['quoted']:
-            new_prop_strs.append('`{0}`:"{1}"'.format(prop['key'], prop['value']))
-        else:
-            new_prop_strs.append('`{0}`:{1}'.format(prop['key'], prop['value']))
+        new_prop_strs.append('`{0}`:{1}'.format(prop['key'], prop['value']))
 
     props = new_props
     props_str = (',').join(new_prop_strs)
@@ -1014,6 +1011,7 @@ def _do_cypher_insert(cy, insert_cypher, obj_list, obj_type):
 
         # do batched inserts with batch size = args.batch_size
         for start in range(0, n_objs, args.batch_size):
+            b_stime = time.time()
             stop = start + args.batch_size
             if stop > n_objs:
                 stop = n_objs
@@ -1021,6 +1019,8 @@ def _do_cypher_insert(cy, insert_cypher, obj_list, obj_type):
             o_slice = new_o_list[start:stop]
             tx.run(ins_cypher, { 'objects': o_slice })
             tx.commit()
+            b_etime = time.time()
+            _print_error("commit() done, insert took {0:.02f} second(s)".format(b_etime - b_stime))
 
     etime = time.time()
     _print_error("inserted {0} {1} in {2:.2f} second(s)".format(len(obj_list), obj_type, etime-stime))
@@ -1328,6 +1328,14 @@ if __name__ == '__main__':
     _insert_nodes(cy, 'sample')
     _insert_nodes(cy, 'file')
     _insert_nodes(cy, 'tag')
+
+    neo4j_ver = ".".join([str(x) for x in cy.database.kernel_version])
+    # 3.4.5-specific workaround
+    if neo4j_ver == "3.4.5":
+        # these theoretically superfluous index statements appear to be critical 
+        # for fast loading in 3.4.5 but slow down loading in 3.4.10:
+        _build_all_indexes('file',cy)
+        _build_constraint_index('tag','term',cy)
 
     # insert tag links
     _insert_links(cy, 'file-tag')
