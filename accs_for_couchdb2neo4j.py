@@ -117,6 +117,7 @@ definitive_edges2 = {
 
 # Remap the study names using these values
 study_name_dict = {
+    'Healthy Human Subjects':'HHS',
     'Human microbiome project 16S production phase I.':'16S-PP1',
     'Human microbiome project 16S production phase II.':'16S-PP2',
     'Skin Microbiome in Disease States: Atopic Dermatitis and Immunodeficiency.':'16S-SM-ADI',
