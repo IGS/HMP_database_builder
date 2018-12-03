@@ -688,21 +688,17 @@ def _build_all_indexes(node,cy):
     etime = time.time()
     _print_error("built {0} {1} indexes in {2:.2f} second(s)".format(n_indexes, node, etime-stime))
 
-# Escape quotes to keep Cypher happy
-def _mod_quotes(val):
+# Apply body site rewrites from fma_free_body_site_dict
+def _mod_body_site(val):
 
     if isinstance(val, list):
         for x in val:
             if x in fma_free_body_site_dict:
                 x = fma_free_body_site_dict[x]
-            x = x.replace("'","\\'")
-            x = x.replace('"','\\"')
 
     else:
         if val in fma_free_body_site_dict:
             val = fma_free_body_site_dict[val]
-        val = val.replace("'","\\'")
-        val = val.replace('"','\\"')
 
     return val
 
@@ -758,7 +754,7 @@ def _traverse_document(doc,focal_node,index):
                     endpoint = val[j].split(':')[0]
                     props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]), 'quoted': True })
         else:
-            val = _mod_quotes(val)
+            val = _mod_body_site(val)
             key = key.encode('utf-8')
             val = val.encode('utf-8')
             props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': True })
