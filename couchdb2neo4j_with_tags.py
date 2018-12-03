@@ -59,7 +59,7 @@ def _print_error(message):
     sys.stderr.write(str(message) + "\n")
     sys.stderr.flush()
 
-def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
+def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=10):
     """
     Helper function to request documents from CouchDB in batches ("pages") for
     efficiency, but present them as a stream.
@@ -67,6 +67,9 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
     # Tell CouchDB we only want a page worth of documents at a time, and that
     # we want the document content as well as the metadata
     view_arguments = {'limit': page_size, 'include_docs': "true"}
+    db_auth = None
+    if db_login is not None:
+        db_auth = ( db_login, db_password )
 
     # Keep track of the last key we've seen
     last_key = None
@@ -94,7 +97,7 @@ def _all_docs_by_page(db_url, cache_dir=None, page_size=10):
                     page = { "status_code": 200, "content": page_content, "source": "cache" }
 
         if page is None:
-            response = requests.get(db_url + "/_all_docs", params=params)
+            response = requests.get(db_url + "/_all_docs", params=params, auth=db_auth)
             page = { "status_code": response.status_code, "content": response.content, "source": "DB" }
             # write page to cache
             if (cache_page is not None) and (response.status_code == 200):
@@ -1045,6 +1048,14 @@ if __name__ == '__main__':
         help="The CouchDB database URL from which to load data")
 
     parser.add_argument(
+        '--couchdb_login', type=str,
+        help="The CouchDB login/username.")
+
+    parser.add_argument(
+        '--couchdb_password', type=str,
+        help="The CouchDB password.")
+
+    parser.add_argument(
         '--cache_dir', type=str, required=False,
         help="Directory in which to cache/find pages downloaded from CouchDB (optional - used for testing).")
 
@@ -1140,7 +1151,7 @@ if __name__ == '__main__':
     # count skipped nodes and print a summary at the end
     node_skip_counts = {}
 
-    for doc in _all_docs_by_page(args.db, args.cache_dir, args.page_size):
+    for doc in _all_docs_by_page(args.db, args.couchdb_login, args.couchdb_password, args.cache_dir, args.page_size):
         # Assume we don't want design documents, since they're likely to be
         # already stored elsewhere (e.g. in version control)
         if doc['id'].startswith("_design"):
