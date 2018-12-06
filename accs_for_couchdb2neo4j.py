@@ -18,7 +18,7 @@ def mod_quotes(val):
             val = float(val) # float just in case
     return val
 
-# This dictionary simply reformats aspects like capitalization for Neo4j. 
+# Mapping from OSDF node type to Neo4J node type (Case, File, Tags) or MIMARKS, Mixs
 nodes = {
     'project': 'Case',
     'study': 'Case',
@@ -54,8 +54,21 @@ nodes = {
     'abundance_matrix': 'File',
     'tags': 'Tags',
     'mimarks': 'MIMARKS',
-    'mixs': 'Mixs'
+    'mixs': 'Mixs',
+    'reference_genome_project_catalog_entry': 'File',
+    'host_epigenetics_raw_seq_set': 'File',
+    'serology': 'File',
+    'metagenomic_project_catalog_entry': 'File',
+    'alignment': 'File',
+    'proteome_nonpride': 'File',
+    'host_variant_call': 'File'
 }
+
+# OSDF node types that map to Neo4J File nodes
+file_nodes = {}
+for n in nodes:
+    if nodes[n] == 'File':
+        file_nodes[n] = True
 
 # These are all the different edge types present in the schema. 
 # Note that 'subset_of' will be removed after loading in order to 
@@ -104,6 +117,7 @@ definitive_edges2 = {
 
 # Remap the study names using these values
 study_name_dict = {
+    'Healthy Human Subjects':'HHS',
     'Human microbiome project 16S production phase I.':'16S-PP1',
     'Human microbiome project 16S production phase II.':'16S-PP2',
     'Skin Microbiome in Disease States: Atopic Dermatitis and Immunodeficiency.':'16S-SM-ADI',
@@ -337,29 +351,6 @@ fma_free_body_site_dict = {
     'vaginal_introitus': 'orifice of vagina',
     'volar_forearm': 'forearm',
     'wall_of_vagina': 'wall of vagina',
-}
-
-# differentiate the file nodes from all others
-files_only = {
-    'wgs_raw_seq_set',
-    'wgs_raw_seq_set_private',
-    'host_wgs_raw_seq_set',
-    'microb_transcriptomics_raw_seq_set',
-    'host_transcriptomics_raw_seq_set',
-    'wgs_assembled_seq_set',
-    'viral_seq_set',
-    'annotation',
-    'clustered_seq_set',
-    '16s_dna_prep',
-    '16s_raw_seq_set',
-    '16s_trimmed_seq_set',
-    'microb_assay_prep',
-    'host_assay_prep',
-    'proteome',
-    'metabolome',
-    'lipidome',
-    'cytokine',
-    'abundance_matrix'
 }
 
 # be explicit about which metadata makes it through the _attr nodes so as not
