@@ -1019,7 +1019,8 @@ def _do_cypher_insert(cy, insert_cypher, obj_list, obj_type):
             tx.run(ins_cypher, { 'objects': o_slice })
             tx.commit()
             b_etime = time.time()
-            _print_error("commit() done, insert took {0:.02f} second(s)".format(b_etime - b_stime))
+# uncomment for batch-level timing info:
+#            _print_error("commit() done, insert took {0:.02f} second(s)".format(b_etime - b_stime))
 
     etime = time.time()
     _print_error("inserted {0} {1} in {2:.2f} second(s)".format(len(obj_list), obj_type, etime-stime))
