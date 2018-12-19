@@ -127,12 +127,6 @@ study_name_dict = {
     'prediabetes':'T2D'
 }
 
-# Some basic syntax corrections
-#syntax_dict = {
-#    '16s':'16S',
-#    'wgs':'WGS'
-#}
-
 # Remap data format values 
 file_format_dict = {
     'sff':'Standard Flowgram File',
@@ -575,3 +569,42 @@ ignore = {
     '5a950f27980b5d93e4c16da1243b821c',
     '52d8c92f2d3660b9add954d544a02d90'
 }
+
+node_type_mapping = {
+    # top-level mapping on node_type
+    '_key': 'node_type',
+    'wgs_raw_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'host_wgs_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'microb_transcriptomics_raw_seq_set': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'host_transcriptomics_raw_seq_set': {'data_modality': 'transcriptome', 'data_type': 'sequence', 'organism_type': 'host'},
+    # TODO - change data_modality to "epigenetics" or "epigenomics"?
+    'host_epigenetics_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
+    # TODO - change data_modality to "variation" or "genomic variation"?
+    'host_variant_call': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
+    '16s_raw_seq_set': {'data_modality': 'marker sequence', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    '16s_trimmed_seq_set': {'data_modality': 'marker sequence', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'proteome': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'host'},
+    'metaproteome': {'data_modality': 'metaproteome', 'data_type': 'abundance', 'organism_type': 'multi-organism'},
+    'metabolome': {'data_modality': 'metabolome', 'data_type': 'abundance', 'organism_type': 'host'},
+
+    # organism_type = dependent upon parent assay node (either 'host' or 'bacterial')
+    'lipidome': {'data_modality': 'lipidome', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'lipidome'},
+    'cytokine': {'data_modality': 'cytokine', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'transcriptome'},
+    'serology': {'data_modality': 'serology', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'serology'},
+
+    # TODO: metametabolome: metabolome - abundance - multi-organism
+
+    'abundance_matrix': {
+        # sub-mapping on matrix_type
+        '_key': 'matrix_type',
+        'wgs_functional': {'data_modality': 'whole metagenome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'functional'},
+        'wgs_community': {'data_modality': 'whole metagenome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'community'},
+        '16s_community': {'data_modality': 'marker sequence', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'community'},
+        'microb_metatranscriptome': {'data_modality': 'metatranscriptome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'transcriptome'},
+        'microb_metabolome': {'data_modality': 'metabolome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'metabolome'},
+        'microb_proteomic': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'proteome'},
+        'host_transcriptome': {'data_modality': 'transcriptome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
+        'host_cytokine': {'data_modality': 'cytokine', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
+        'host_lipidomic': {'data_modality': 'lipidome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'lipidome'}
+        }
+    }

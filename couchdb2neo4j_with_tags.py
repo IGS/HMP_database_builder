@@ -24,7 +24,7 @@
 
 import argparse,gzip,json,os,requests,sys,time,urllib
 from py2neo import Graph
-from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
+from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict, node_type_mapping
 from accs_for_couchdb2neo4j import file_nodes, meta_to_keep, meta_null_vals, keys_to_keep, ignore
 import pprint
 import re
@@ -51,6 +51,15 @@ NODE_LINKS = {
     'file-tag': { 'cypher': FILE_TAG_CYPHER, 'links': [] },
     'sample-file': { 'cypher': SAMPLE_FILE_CYPHER, 'links': [] },
     }
+
+# track nodes added by node_type
+NODES_BY_TYPE = {}
+
+def _add_type(t):
+    if t in NODES_BY_TYPE:
+        NODES_BY_TYPE[t] += 1
+    else:
+        NODES_BY_TYPE[t] = 0
 
 def _print_error(message):
     """
@@ -705,6 +714,63 @@ def _mod_body_site(val):
 
     return val
 
+# Add dependent File node attributes based on node_type_mapping
+def _add_dependent_file_attributes(doc,file_info):
+
+    # convert file_info props to dict
+    fip = {}
+    for p in file_info['props']:
+        fip[p['key']] = p['value']
+
+    node_type = doc['main']['node_type']
+    node_type2 = fip['node_type']
+    if node_type != node_type2:
+        print("node type mismatch")
+        sys.exit(1)
+
+    if node_type not in node_type_mapping:
+        _print_error("no mapping defined for node type " + node_type)
+        # debug missing node_type
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
+        print("doc=")
+        pp.pprint(doc)
+        print("file_info=")
+        pp.pprint(file_info)
+        return
+
+    res = node_type_mapping[node_type]
+    _add_type(node_type)
+
+    # secondary mapping based on matrix type
+    if '_key' in res:
+        matrix_type = doc['main']['matrix_type']
+        matrix_type2 = fip['matrix_type']
+        if matrix_type != matrix_type2:
+            print("matrix type mismatch")
+            sys.exit(1)
+        
+        if matrix_type not in res:
+            _print_error("no mapping defined for matrix type " + matrix_type)
+            return
+            
+        _add_type(node_type + "/" + matrix_type)
+        res = res[matrix_type]
+            
+    for key in res:
+        if isinstance(res[key], dict):
+            if res[key]['_key'] == 'parent':
+                # check parent assay to determine whether organism_type should be 'host' or 'bacterial'
+                prep_type = doc['prep']['node_type']
+                if prep_type == 'host_assay_prep':
+                    file_info['props'].append({'key': key, 'value': 'host'})
+                else:
+                    _print_error("unrecognized prep type encountered: " + prep_type)
+                    sys.exit(1)
+            else:
+                _print_error("unknown _key value of " + res[key]['_key'] + " in node_type_mapping")
+        else:
+            file_info['props'].append({'key': key, 'value': res[key]})
+
 # Function to traverse the nested JSON documents from CouchDB and return
 # a flattened set of properties specific to the particular node. The index
 # value indicates whether or not this node has multiple upstream nodes.
@@ -733,7 +799,7 @@ def _traverse_document(doc,focal_node,index):
 
         if isinstance(val, int) or isinstance(val, float):
             key = key.encode('utf-8')
-            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val, 'quoted': False })
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val })
         elif isinstance(val, list): # lists should be urls, contacts, and tags
             for j in range(0,len(val)):
 
@@ -747,20 +813,20 @@ def _traverse_document(doc,focal_node,index):
                             email = vals
                             break
                     if email:
-                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(email), 'quoted': True })
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(email) })
                         break
                     else:
-                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(val[j]), 'quoted': True })
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(val[j]) })
                         break
 
                 else:
                     endpoint = val[j].split(':')[0]
-                    props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]), 'quoted': True })
+                    props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]) })
         else:
             val = _mod_body_site(val)
             key = key.encode('utf-8')
             val = val.encode('utf-8')
-            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': True })
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val) })
 
         if key == "id":
             doc_id = val
@@ -773,7 +839,7 @@ def _traverse_document(doc,focal_node,index):
                 break
 
         if not format_present:
-            props.append({'key': 'format', 'value': 'Text', 'quoted': True })
+            props.append({'key': 'format', 'value': 'Text' })
 
     # remove empty properties and apply rewrites
     new_props = []
@@ -813,6 +879,8 @@ def _generate_cypher(doc,index):
     all_tags = {}
 
     file_info = _traverse_document(doc,'main','') # file is never a list, so never has an index
+    _add_dependent_file_attributes(doc, file_info)
+
     if file_info['id'] not in NODE_IDS:
         NODE_IDS[file_info['id']] = True
         NODES['file'].append({'_props': file_info['props']})
@@ -898,7 +966,7 @@ def _generate_cypher(doc,index):
             # add tag if it hasn't already been seen
             if tag not in TAGS:
                 TAGS[tag] = tag_link
-                NODES['tag'].append({'_props': [{'key': 'term', 'value': tag, 'quoted': True}]})
+                NODES['tag'].append({'_props': [{'key': 'term', 'value': tag }]})
 
     return cypher
 
@@ -957,7 +1025,7 @@ def _get_properties_sig(node):
 # obj_list - List of objects (nodes or links/edges) to insert. This is a list of dicts 
 #   that defines the attributes/fields referenced in insert_cypher. If insert_cypher 
 #   contains the string "<PROPS>" then each dict must have a '_props' field mapping to
-#   a list of { 'key': property_key, 'value': property_value, 'quoted' }.
+#   a list of { 'key': property_key, 'value': property_value }.
 # obj_type - Type of object ('node' or 'link') to be inserted. Used only to print a 
 #   status message.
 #
@@ -1267,6 +1335,7 @@ if __name__ == '__main__':
     for node_type in node_skip_counts:
         count = node_skip_counts[node_type]
         sys.stdout.write("  {0} : {1}\n".format(node_type, str(count)))
+    sys.stdout.write("\n")
 
     for key in nodes:
 
@@ -1330,6 +1399,13 @@ if __name__ == '__main__':
     for subtype in NO_UPSTREAM_SRS:
         count = len(NO_UPSTREAM_SRS[subtype])
         sys.stdout.write("  {0} : {1}\n".format(subtype, str(count)))
+    sys.stdout.write("\n")
+
+    # node counts by type
+    print("node counts by type/subtype:")
+    for t in sorted(NODES_BY_TYPE):
+        print(t + ": " + str(NODES_BY_TYPE[t]))
+    sys.stdout.write("\n")
 
     # insert nodes (this order appears to yield the best performance):
     _insert_nodes(cy, 'subject')
