@@ -574,7 +574,7 @@ node_type_mapping = {
     # top-level mapping on node_type
     '_key': 'node_type',
     'wgs_raw_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
-    'host_wgs_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'host_wgs_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
     'microb_transcriptomics_raw_seq_set': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
     'host_transcriptomics_raw_seq_set': {'data_modality': 'transcriptome', 'data_type': 'sequence', 'organism_type': 'host'},
     # TODO - change data_modality to "epigenetics" or "epigenomics"?
