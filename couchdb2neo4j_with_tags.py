@@ -731,11 +731,11 @@ def _add_dependent_file_attributes(doc,file_info):
     if node_type not in node_type_mapping:
         _print_error("no mapping defined for node type " + node_type)
         # debug missing node_type
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        print("doc=")
-        pp.pprint(doc)
-        print("file_info=")
-        pp.pprint(file_info)
+#        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
+#        print("doc=")
+#        pp.pprint(doc)
+#        print("file_info=")
+#        pp.pprint(file_info)
         return
 
     res = node_type_mapping[node_type]
