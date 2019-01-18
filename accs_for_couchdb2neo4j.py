@@ -606,5 +606,38 @@ node_type_mapping = {
         'host_transcriptome': {'data_modality': 'transcriptome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
         'host_cytokine': {'data_modality': 'cytokine', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
         'host_lipidomic': {'data_modality': 'lipidome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'lipidome'}
-        }
+        },
+
+    'alignment': {
+        # sub-mapping on study - don't want to assume the same mapping for non-HMP data
+        '_key': 'study',
+        'Human microbiome project WGS production phase I.': {'data_modality': 'whole metagenome', 'data_type': 'alignment', 'organism_type': 'bacterial'}
+        },
+
+    'annotation': {
+        '_key': 'study',
+        'Human microbiome project WGS production phase I.':
+            {
+            # sub-mapping on subtype
+            '_key': 'subtype',
+            # multi-FASTA protein files
+            'hmgi': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'hmhgi': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'wgs_annotation': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            # GFF files
+            'hmgi2': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'hmcgi2': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+            }
+
+        },
+
+    'clustered_seq_set': {
+        '_key': 'abbrev',
+        'HMGC': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+        'HMGC2': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+    },
+
+    'proteome_nonpride': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'host'},
+    'wgs_assembled_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+
     }

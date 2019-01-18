@@ -54,12 +54,21 @@ NODE_LINKS = {
 
 # track nodes added by node_type
 NODES_BY_TYPE = {}
+PROPS_BY_TYPE = {}
 
 def _add_type(t):
     if t in NODES_BY_TYPE:
         NODES_BY_TYPE[t] += 1
     else:
-        NODES_BY_TYPE[t] = 0
+        NODES_BY_TYPE[t] = 1
+
+def _add_type_props(t, pstr):
+    if t not in PROPS_BY_TYPE:
+        PROPS_BY_TYPE[t] = {}
+    if pstr not in PROPS_BY_TYPE[t]:
+        PROPS_BY_TYPE[t][pstr] = 1
+    else:
+        PROPS_BY_TYPE[t][pstr] += 1
 
 def _print_error(message):
     """
@@ -730,46 +739,56 @@ def _add_dependent_file_attributes(doc,file_info):
 
     if node_type not in node_type_mapping:
         _print_error("no mapping defined for node type " + node_type)
-        # debug missing node_type
-#        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-#        print("doc=")
-#        pp.pprint(doc)
-#        print("file_info=")
-#        pp.pprint(file_info)
         return
 
     res = node_type_mapping[node_type]
     _add_type(node_type)
 
-    # secondary mapping based on matrix type
-    if '_key' in res:
-        matrix_type = doc['main']['matrix_type']
-        matrix_type2 = fip['matrix_type']
-        if matrix_type != matrix_type2:
-            print("matrix type mismatch")
+    subtype = node_type
+    n_subtypes = 0
+
+    # secondary/tertiary mappings based on arbitrary key
+    while ('_key' in res) and (res['_key'] != 'parent'):
+        nested_key = res['_key']
+        nkval1 = doc['main'][nested_key]
+        nkval2 = fip[nested_key]
+
+        if nkval1 != nkval2:
+            print(nested_key + " mismatch")
             sys.exit(1)
         
-        if matrix_type not in res:
-            _print_error("no mapping defined for matrix type " + matrix_type)
+        if nkval1 not in res:
+            _print_error("no mapping defined for" + nested_key + " " + nkval1)
             return
+
+        n_subtypes += 1
+        subtype = subtype + "/" + nkval1
+        res = res[nkval1]
             
-        _add_type(node_type + "/" + matrix_type)
-        res = res[matrix_type]
-            
-    for key in res:
+    if n_subtypes > 0:
+        _add_type(subtype)
+
+    # record what properties were added
+    props_added = []
+
+    for key in sorted(res):
         if isinstance(res[key], dict):
             if res[key]['_key'] == 'parent':
                 # check parent assay to determine whether organism_type should be 'host' or 'bacterial'
                 prep_type = doc['prep']['node_type']
                 if prep_type == 'host_assay_prep':
-                    file_info['props'].append({'key': key, 'value': 'host'})
+                    props_added.append({'key': key, 'value': 'host'})
                 else:
                     _print_error("unrecognized prep type encountered: " + prep_type)
                     sys.exit(1)
             else:
                 _print_error("unknown _key value of " + res[key]['_key'] + " in node_type_mapping")
         else:
-            file_info['props'].append({'key': key, 'value': res[key]})
+            props_added.append({'key': key, 'value': res[key]})
+
+    file_info['props'].extend(props_added)
+    props_added_str = ", ".join([p['key'] + ":" + p['value'] for p in props_added])
+    _add_type_props(subtype, props_added_str)
 
 # Function to traverse the nested JSON documents from CouchDB and return
 # a flattened set of properties specific to the particular node. The index
@@ -1405,6 +1424,10 @@ if __name__ == '__main__':
     print("node counts by type/subtype:")
     for t in sorted(NODES_BY_TYPE):
         print(t + ": " + str(NODES_BY_TYPE[t]))
+        if t in PROPS_BY_TYPE:
+            pbt = PROPS_BY_TYPE[t]
+            for p in pbt:
+                print(" " + str(pbt[p]) + " - " + p)
     sys.stdout.write("\n")
 
     # insert nodes (this order appears to yield the best performance):
