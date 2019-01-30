@@ -224,6 +224,11 @@ def _build_abundance_matrix_doc(all_nodes_dict,node):
         doc['16s_raw_seq_set'] = _find_upstream_node(all_nodes_dict['16s_raw_seq_set'],'16s_raw_seq_set',doc['16s_trimmed_seq_set']['linkage']['computed_from'])
         doc['prep'] = _find_upstream_node(all_nodes_dict['16s_dna_prep'],'16s_dna_prep',doc['16s_raw_seq_set']['linkage']['sequenced_from'])
 
+    elif link in all_nodes_dict['viral_seq_set']:
+        doc['viral_seq_set'] = _find_upstream_node(all_nodes_dict['viral_seq_set'],'viral_seq_set',link)
+        doc['wgs_raw_seq_set'] = _find_upstream_node(all_nodes_dict['wgs_raw_seq_set'],'wgs_raw_seq_set',doc['viral_seq_set']['linkage']['computed_from'])
+        doc['prep'] = _find_upstream_node(all_nodes_dict['wgs_dna_prep'],'wgs_dna_prep',doc['wgs_raw_seq_set']['linkage']['sequenced_from'])
+
     # process the left pathway
     elif (
         link in all_nodes_dict['microb_transcriptomics_raw_seq_set']
@@ -381,6 +386,17 @@ def _build_annotation_doc(all_nodes_dict,node):
         which_upstream = 'viral_seq_set'
     elif link in all_nodes_dict['wgs_assembled_seq_set']:
         which_upstream = 'wgs_assembled_seq_set'
+    else:
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
+        sys.stdout.write("annotation with unexpected upstream node type:")
+        pp.pprint(doc)
+
+        for nt in all_nodes_dict.keys():
+            if link in all_nodes_dict[nt]:
+                _print_error("encountered annotation node with upstream node_type=" + nt)
+                sys.exit(1)
+        _print_error("encountered annotation node with unknown upstream node_type/missing upstream node")
+        sys.exit(1)
 
     doc[which_upstream] = _find_upstream_node(all_nodes_dict[which_upstream],which_upstream,link)
     link = _refine_link(doc[which_upstream]['linkage']['computed_from'])
@@ -758,7 +774,7 @@ def _add_dependent_file_attributes(doc,file_info):
             sys.exit(1)
         
         if nkval1 not in res:
-            _print_error("no mapping defined for" + nested_key + " " + nkval1)
+            _print_error("no mapping defined for node_type=" + node_type + ", " + nested_key + "=" + nkval1)
             return
 
         n_subtypes += 1
