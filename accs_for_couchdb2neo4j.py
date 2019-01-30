@@ -636,7 +636,7 @@ node_type_mapping = {
         'HMGC': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
         'HMGC2': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
     },
-
+    'viral_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'viral'},
     'proteome_nonpride': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'host'},
     'wgs_assembled_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
 
