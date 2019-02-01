@@ -56,6 +56,9 @@ NODE_LINKS = {
 NODES_BY_TYPE = {}
 PROPS_BY_TYPE = {}
 
+# whether to dump problem documents/nodes
+DUMP_PROBLEM_DOCS = False
+
 def _add_type(t):
     if t in NODES_BY_TYPE:
         NODES_BY_TYPE[t] += 1
@@ -70,11 +73,16 @@ def _add_type_props(t, pstr):
     else:
         PROPS_BY_TYPE[t][pstr] += 1
 
-def _print_error(message):
+def _print_error(message, doc=None):
     """
     Print a message to stderr, with a newline.
     """
     sys.stderr.write(str(message) + "\n")
+
+    if doc is not None and DUMP_PROBLEM_DOCS:
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stderr)
+        pp.pprint(doc)
+
     sys.stderr.flush()
 
 def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=10):
@@ -387,9 +395,7 @@ def _build_annotation_doc(all_nodes_dict,node):
     elif link in all_nodes_dict['wgs_assembled_seq_set']:
         which_upstream = 'wgs_assembled_seq_set'
     else:
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        sys.stdout.write("annotation with unexpected upstream node type:")
-        pp.pprint(doc)
+        _print_error("annotation (id=" + doc['main']['id'] + ") with unexpected upstream node type: ", doc)
 
         for nt in all_nodes_dict.keys():
             if link in all_nodes_dict[nt]:
@@ -550,9 +556,7 @@ def _isolate_relevant_prep_edge(doc):
     if ((doc['main']['subtype'] != 'wgs_coassembly' and doc['main']['subtype'] != 'trimmed_16s') 
         and
         (doc['main']['subtype'] != 'wgs_assembly' and doc['main']['name'] != "Body-site specific assemblies")):
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        sys.stdout.write("SRS# cannot be found upstream for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
-        pp.pprint(doc)
+        _print_error("SRS# cannot be found upstream for node of type/subtype = {0}/{1} (id={2})".format(doc['main']['node_type'], doc['main']['subtype'], doc['main']['id']), doc)
 
     return doc['prep'] # if we made it here, could not isolate upstream SRS
 
@@ -575,9 +579,7 @@ def _collect_sample_through_project(all_nodes_dict,doc):
 
     # debug missing preps
     if 'prep' not in doc:
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        sys.stdout.write("prep not found for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
-        pp.pprint(doc)
+        _print_error("prep not found for node of type/subtype = {0}/{1} (id={2})".format(doc['main']['node_type'], doc['main']['subtype'], doc['main']['id']), doc)
         return None
 
     # some abundance matrices are computed_from the study rather than a specific sample/prep
@@ -1191,7 +1193,13 @@ if __name__ == '__main__':
         "--check_sample_file_uniqueness", dest="check_sample_file_uniqueness", action="store_true",
         help="Check sample-file links for uniqueness. Slower because the properties must be checked.")
 
+    parser.add_argument(
+        "--dump_problem_docs", dest="dump_problem_docs", action="store_true",
+        help="Whether to dump/log problematic documents (e.g., those with no upstream SRA SRSxxxxx sample id, missing prep, or unexpected upstream node type.)")
+
     args = parser.parse_args()
+    DUMP_PROBLEM_DOCS = args.dump_problem_docs
+
     cy = Graph(host = args.neo4j_host, password = args.neo4j_password, bolt_port = args.bolt_port, http_port = args.http_port) 
 
     _build_constraint_index('subject','id',cy)
