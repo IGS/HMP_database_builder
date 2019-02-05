@@ -22,12 +22,13 @@
 #
 #-*-coding: utf-8-*-
 
-import argparse,gzip,json,os,requests,sys,time,urllib
+import argparse,gzip,json,os,requests,sys,time
 from py2neo import Graph
 from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict, node_type_mapping
 from accs_for_couchdb2neo4j import file_nodes, meta_to_keep, meta_null_vals, keys_to_keep, ignore
 import pprint
 import re
+from six import string_types
 
 # nodes without upstream SRS#
 NO_UPSTREAM_SRS = {}
@@ -104,8 +105,9 @@ def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=1
     # This is intended primarily for debugging/testing purposes.
     cache_subdir = None
     if cache_dir is not None:
+        q_url = re.sub('/', '%2F', requests.utils.quote(db_url))
         # to keep things simple the cache will be page-size-specific
-        cache_subdir = os.path.join(cache_dir, urllib.quote_plus(db_url), str(page_size))
+        cache_subdir = os.path.join(cache_dir, q_url, str(page_size))
         # create the subdir if it does not exist
         if not os.path.exists(cache_subdir):
             os.makedirs(cache_subdir)
@@ -141,14 +143,14 @@ def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=1
         # If there's been an error, stop looping
         if page['status_code'] != 200:
             _print_error("Error from DB: " + str(page['content']))
-            break
+            sys.exit(1)
 
         # Parse the results as JSON. If there's an error, stop looping
         try:
-            results = json.loads(page['content'])
+            results = json.loads(page['content'], encoding='UTF-8')
         except:
             _print_error("Unable to parse JSON: " + str(page['content']))
-            break
+            sys.exit(1)
 
         # If there's no more data to read, stop looping
         if 'rows' not in results or not results['rows']:
@@ -197,7 +199,7 @@ def _build_16s_trimmed_seq_set_doc(all_nodes_dict,node):
         doc['prep'] = []
         for x in range(0,len(doc['16s_raw_seq_set'])):
             doc['prep'] += _multi_find_upstream_node(all_nodes_dict['16s_dna_prep'],'16s_dna_prep',doc['16s_raw_seq_set'][x]['linkage']['sequenced_from'])
-        doc['prep'] = {v['id']:v for v in doc['prep']}.values() # uniquifying
+        doc['prep'] = list({v['id']:v for v in doc['prep']}.values()) # uniquifying
         doc['prep'] = _isolate_relevant_prep_edge(doc)
 
         if type(doc['prep']) is list:
@@ -371,7 +373,7 @@ def _build_wgs_assembled_or_viral_seq_set_doc(all_nodes_dict,node):
         doc['prep'] = []
         for x in range(0,len(doc[which_upstream])):
             doc['prep'] += _multi_find_upstream_node(all_nodes_dict[which_prep],which_prep,doc[which_upstream][x]['linkage']['sequenced_from'])
-        doc['prep'] = {v['id']:v for v in doc['prep']}.values() # uniquifying
+        doc['prep'] = list({v['id']:v for v in doc['prep']}.values()) # uniquifying
         doc['prep'] = _isolate_relevant_prep_edge(doc)
         if type(doc['prep']) is list:
             return _multi_collect_sample_through_project(all_nodes_dict,doc)
@@ -751,6 +753,7 @@ def _add_dependent_file_attributes(doc,file_info):
 
     node_type = doc['main']['node_type']
     node_type2 = fip['node_type']
+
     if node_type != node_type2:
         print("node type mismatch")
         sys.exit(1)
@@ -835,7 +838,6 @@ def _traverse_document(doc,focal_node,index):
             continue
 
         if isinstance(val, int) or isinstance(val, float):
-            key = key.encode('utf-8')
             props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val })
         elif isinstance(val, list): # lists should be urls, contacts, and tags
             for j in range(0,len(val)):
@@ -861,8 +863,6 @@ def _traverse_document(doc,focal_node,index):
                     props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]) })
         else:
             val = _mod_body_site(val)
-            key = key.encode('utf-8')
-            val = val.encode('utf-8')
             props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val) })
 
         if key == "id":
@@ -901,7 +901,7 @@ def _traverse_document(doc,focal_node,index):
     return {'id':doc_id,'tag_list':tags,'prop_str':props_str,'props':props}
 
 def _add_unique_tags(th, tl):
-    if isinstance(tl, basestring):
+    if isinstance(tl, string_types):
         if tl not in th:
             th[tl] = True
     else:
