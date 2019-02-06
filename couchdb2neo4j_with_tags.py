@@ -22,12 +22,13 @@
 #
 #-*-coding: utf-8-*-
 
-import argparse,gzip,json,os,requests,sys,time,urllib
+import argparse,gzip,json,os,requests,sys,time
 from py2neo import Graph
-from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict
+from accs_for_couchdb2neo4j import fma_free_body_site_dict, study_name_dict, file_format_dict, node_type_mapping
 from accs_for_couchdb2neo4j import file_nodes, meta_to_keep, meta_null_vals, keys_to_keep, ignore
 import pprint
 import re
+from six import string_types
 
 # nodes without upstream SRS#
 NO_UPSTREAM_SRS = {}
@@ -52,11 +53,37 @@ NODE_LINKS = {
     'sample-file': { 'cypher': SAMPLE_FILE_CYPHER, 'links': [] },
     }
 
-def _print_error(message):
+# track nodes added by node_type
+NODES_BY_TYPE = {}
+PROPS_BY_TYPE = {}
+
+# whether to dump problem documents/nodes
+DUMP_PROBLEM_DOCS = False
+
+def _add_type(t):
+    if t in NODES_BY_TYPE:
+        NODES_BY_TYPE[t] += 1
+    else:
+        NODES_BY_TYPE[t] = 1
+
+def _add_type_props(t, pstr):
+    if t not in PROPS_BY_TYPE:
+        PROPS_BY_TYPE[t] = {}
+    if pstr not in PROPS_BY_TYPE[t]:
+        PROPS_BY_TYPE[t][pstr] = 1
+    else:
+        PROPS_BY_TYPE[t][pstr] += 1
+
+def _print_error(message, doc=None):
     """
     Print a message to stderr, with a newline.
     """
     sys.stderr.write(str(message) + "\n")
+
+    if doc is not None and DUMP_PROBLEM_DOCS:
+        pp = pprint.PrettyPrinter(indent=4, stream=sys.stderr)
+        pp.pprint(doc)
+
     sys.stderr.flush()
 
 def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=10):
@@ -78,8 +105,9 @@ def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=1
     # This is intended primarily for debugging/testing purposes.
     cache_subdir = None
     if cache_dir is not None:
+        q_url = re.sub('/', '%2F', requests.utils.quote(db_url))
         # to keep things simple the cache will be page-size-specific
-        cache_subdir = os.path.join(cache_dir, urllib.quote_plus(db_url), str(page_size))
+        cache_subdir = os.path.join(cache_dir, q_url, str(page_size))
         # create the subdir if it does not exist
         if not os.path.exists(cache_subdir):
             os.makedirs(cache_subdir)
@@ -115,14 +143,14 @@ def _all_docs_by_page(db_url, db_login, db_password, cache_dir=None, page_size=1
         # If there's been an error, stop looping
         if page['status_code'] != 200:
             _print_error("Error from DB: " + str(page['content']))
-            break
+            sys.exit(1)
 
         # Parse the results as JSON. If there's an error, stop looping
         try:
-            results = json.loads(page['content'])
+            results = json.loads(page['content'], encoding='UTF-8')
         except:
             _print_error("Unable to parse JSON: " + str(page['content']))
-            break
+            sys.exit(1)
 
         # If there's no more data to read, stop looping
         if 'rows' not in results or not results['rows']:
@@ -171,7 +199,7 @@ def _build_16s_trimmed_seq_set_doc(all_nodes_dict,node):
         doc['prep'] = []
         for x in range(0,len(doc['16s_raw_seq_set'])):
             doc['prep'] += _multi_find_upstream_node(all_nodes_dict['16s_dna_prep'],'16s_dna_prep',doc['16s_raw_seq_set'][x]['linkage']['sequenced_from'])
-        doc['prep'] = {v['id']:v for v in doc['prep']}.values() # uniquifying
+        doc['prep'] = list({v['id']:v for v in doc['prep']}.values()) # uniquifying
         doc['prep'] = _isolate_relevant_prep_edge(doc)
 
         if type(doc['prep']) is list:
@@ -205,6 +233,11 @@ def _build_abundance_matrix_doc(all_nodes_dict,node):
         doc['16s_trimmed_seq_set'] = _find_upstream_node(all_nodes_dict['16s_trimmed_seq_set'],'16s_trimmed_seq_set',link)
         doc['16s_raw_seq_set'] = _find_upstream_node(all_nodes_dict['16s_raw_seq_set'],'16s_raw_seq_set',doc['16s_trimmed_seq_set']['linkage']['computed_from'])
         doc['prep'] = _find_upstream_node(all_nodes_dict['16s_dna_prep'],'16s_dna_prep',doc['16s_raw_seq_set']['linkage']['sequenced_from'])
+
+    elif link in all_nodes_dict['viral_seq_set']:
+        doc['viral_seq_set'] = _find_upstream_node(all_nodes_dict['viral_seq_set'],'viral_seq_set',link)
+        doc['wgs_raw_seq_set'] = _find_upstream_node(all_nodes_dict['wgs_raw_seq_set'],'wgs_raw_seq_set',doc['viral_seq_set']['linkage']['computed_from'])
+        doc['prep'] = _find_upstream_node(all_nodes_dict['wgs_dna_prep'],'wgs_dna_prep',doc['wgs_raw_seq_set']['linkage']['sequenced_from'])
 
     # process the left pathway
     elif (
@@ -340,7 +373,7 @@ def _build_wgs_assembled_or_viral_seq_set_doc(all_nodes_dict,node):
         doc['prep'] = []
         for x in range(0,len(doc[which_upstream])):
             doc['prep'] += _multi_find_upstream_node(all_nodes_dict[which_prep],which_prep,doc[which_upstream][x]['linkage']['sequenced_from'])
-        doc['prep'] = {v['id']:v for v in doc['prep']}.values() # uniquifying
+        doc['prep'] = list({v['id']:v for v in doc['prep']}.values()) # uniquifying
         doc['prep'] = _isolate_relevant_prep_edge(doc)
         if type(doc['prep']) is list:
             return _multi_collect_sample_through_project(all_nodes_dict,doc)
@@ -363,6 +396,15 @@ def _build_annotation_doc(all_nodes_dict,node):
         which_upstream = 'viral_seq_set'
     elif link in all_nodes_dict['wgs_assembled_seq_set']:
         which_upstream = 'wgs_assembled_seq_set'
+    else:
+        _print_error("annotation (id=" + doc['main']['id'] + ") with unexpected upstream node type: ", doc)
+
+        for nt in all_nodes_dict.keys():
+            if link in all_nodes_dict[nt]:
+                _print_error("encountered annotation node with upstream node_type=" + nt)
+                sys.exit(1)
+        _print_error("encountered annotation node with unknown upstream node_type/missing upstream node")
+        sys.exit(1)
 
     doc[which_upstream] = _find_upstream_node(all_nodes_dict[which_upstream],which_upstream,link)
     link = _refine_link(doc[which_upstream]['linkage']['computed_from'])
@@ -516,9 +558,7 @@ def _isolate_relevant_prep_edge(doc):
     if ((doc['main']['subtype'] != 'wgs_coassembly' and doc['main']['subtype'] != 'trimmed_16s') 
         and
         (doc['main']['subtype'] != 'wgs_assembly' and doc['main']['name'] != "Body-site specific assemblies")):
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        sys.stdout.write("SRS# cannot be found upstream for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
-        pp.pprint(doc)
+        _print_error("SRS# cannot be found upstream for node of type/subtype = {0}/{1} (id={2})".format(doc['main']['node_type'], doc['main']['subtype'], doc['main']['id']), doc)
 
     return doc['prep'] # if we made it here, could not isolate upstream SRS
 
@@ -541,9 +581,7 @@ def _collect_sample_through_project(all_nodes_dict,doc):
 
     # debug missing preps
     if 'prep' not in doc:
-        pp = pprint.PrettyPrinter(indent=4, stream=sys.stdout)
-        sys.stdout.write("prep not found for node of type/subtype = {0}/{1}\n".format(doc['main']['node_type'], doc['main']['subtype']))
-        pp.pprint(doc)
+        _print_error("prep not found for node of type/subtype = {0}/{1} (id={2})".format(doc['main']['node_type'], doc['main']['subtype'], doc['main']['id']), doc)
         return None
 
     # some abundance matrices are computed_from the study rather than a specific sample/prep
@@ -705,6 +743,74 @@ def _mod_body_site(val):
 
     return val
 
+# Add dependent File node attributes based on node_type_mapping
+def _add_dependent_file_attributes(doc,file_info):
+
+    # convert file_info props to dict
+    fip = {}
+    for p in file_info['props']:
+        fip[p['key']] = p['value']
+
+    node_type = doc['main']['node_type']
+    node_type2 = fip['node_type']
+
+    if node_type != node_type2:
+        print("node type mismatch")
+        sys.exit(1)
+
+    if node_type not in node_type_mapping:
+        _print_error("no mapping defined for node type " + node_type)
+        return
+
+    res = node_type_mapping[node_type]
+    _add_type(node_type)
+
+    subtype = node_type
+    n_subtypes = 0
+
+    # secondary/tertiary mappings based on arbitrary key
+    while ('_key' in res) and (res['_key'] != 'parent'):
+        nested_key = res['_key']
+        nkval1 = doc['main'][nested_key]
+        nkval2 = fip[nested_key]
+
+        if nkval1 != nkval2:
+            print(nested_key + " mismatch")
+            sys.exit(1)
+        
+        if nkval1 not in res:
+            _print_error("no mapping defined for node_type=" + node_type + ", " + nested_key + "=" + nkval1)
+            return
+
+        n_subtypes += 1
+        subtype = subtype + "/" + nkval1
+        res = res[nkval1]
+            
+    if n_subtypes > 0:
+        _add_type(subtype)
+
+    # record what properties were added
+    props_added = []
+
+    for key in sorted(res):
+        if isinstance(res[key], dict):
+            if res[key]['_key'] == 'parent':
+                # check parent assay to determine whether organism_type should be 'host' or 'bacterial'
+                prep_type = doc['prep']['node_type']
+                if prep_type == 'host_assay_prep':
+                    props_added.append({'key': key, 'value': 'host'})
+                else:
+                    _print_error("unrecognized prep type encountered: " + prep_type)
+                    sys.exit(1)
+            else:
+                _print_error("unknown _key value of " + res[key]['_key'] + " in node_type_mapping")
+        else:
+            props_added.append({'key': key, 'value': res[key]})
+
+    file_info['props'].extend(props_added)
+    props_added_str = ", ".join([p['key'] + ":" + p['value'] for p in props_added])
+    _add_type_props(subtype, props_added_str)
+
 # Function to traverse the nested JSON documents from CouchDB and return
 # a flattened set of properties specific to the particular node. The index
 # value indicates whether or not this node has multiple upstream nodes.
@@ -732,8 +838,7 @@ def _traverse_document(doc,focal_node,index):
             continue
 
         if isinstance(val, int) or isinstance(val, float):
-            key = key.encode('utf-8')
-            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val, 'quoted': False })
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': val })
         elif isinstance(val, list): # lists should be urls, contacts, and tags
             for j in range(0,len(val)):
 
@@ -747,20 +852,18 @@ def _traverse_document(doc,focal_node,index):
                             email = vals
                             break
                     if email:
-                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(email), 'quoted': True })
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(email) })
                         break
                     else:
-                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(val[j]), 'quoted': True })
+                        props.append({'key': '{0}contact'.format(key_prefix), 'value': '{0}'.format(val[j]) })
                         break
 
                 else:
                     endpoint = val[j].split(':')[0]
-                    props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]), 'quoted': True })
+                    props.append({'key': '{0}{1}'.format(key_prefix,endpoint), 'value': '{0}'.format(val[j]) })
         else:
             val = _mod_body_site(val)
-            key = key.encode('utf-8')
-            val = val.encode('utf-8')
-            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val), 'quoted': True })
+            props.append({'key': '{0}{1}'.format(key_prefix,key), 'value': '{0}'.format(val) })
 
         if key == "id":
             doc_id = val
@@ -773,7 +876,7 @@ def _traverse_document(doc,focal_node,index):
                 break
 
         if not format_present:
-            props.append({'key': 'format', 'value': 'Text', 'quoted': True })
+            props.append({'key': 'format', 'value': 'Text' })
 
     # remove empty properties and apply rewrites
     new_props = []
@@ -798,7 +901,7 @@ def _traverse_document(doc,focal_node,index):
     return {'id':doc_id,'tag_list':tags,'prop_str':props_str,'props':props}
 
 def _add_unique_tags(th, tl):
-    if isinstance(tl, basestring):
+    if isinstance(tl, string_types):
         if tl not in th:
             th[tl] = True
     else:
@@ -813,6 +916,8 @@ def _generate_cypher(doc,index):
     all_tags = {}
 
     file_info = _traverse_document(doc,'main','') # file is never a list, so never has an index
+    _add_dependent_file_attributes(doc, file_info)
+
     if file_info['id'] not in NODE_IDS:
         NODE_IDS[file_info['id']] = True
         NODES['file'].append({'_props': file_info['props']})
@@ -898,7 +1003,7 @@ def _generate_cypher(doc,index):
             # add tag if it hasn't already been seen
             if tag not in TAGS:
                 TAGS[tag] = tag_link
-                NODES['tag'].append({'_props': [{'key': 'term', 'value': tag, 'quoted': True}]})
+                NODES['tag'].append({'_props': [{'key': 'term', 'value': tag }]})
 
     return cypher
 
@@ -957,7 +1062,7 @@ def _get_properties_sig(node):
 # obj_list - List of objects (nodes or links/edges) to insert. This is a list of dicts 
 #   that defines the attributes/fields referenced in insert_cypher. If insert_cypher 
 #   contains the string "<PROPS>" then each dict must have a '_props' field mapping to
-#   a list of { 'key': property_key, 'value': property_value, 'quoted' }.
+#   a list of { 'key': property_key, 'value': property_value }.
 # obj_type - Type of object ('node' or 'link') to be inserted. Used only to print a 
 #   status message.
 #
@@ -1088,7 +1193,13 @@ if __name__ == '__main__':
         "--check_sample_file_uniqueness", dest="check_sample_file_uniqueness", action="store_true",
         help="Check sample-file links for uniqueness. Slower because the properties must be checked.")
 
+    parser.add_argument(
+        "--dump_problem_docs", dest="dump_problem_docs", action="store_true",
+        help="Whether to dump/log problematic documents (e.g., those with no upstream SRA SRSxxxxx sample id, missing prep, or unexpected upstream node type.)")
+
     args = parser.parse_args()
+    DUMP_PROBLEM_DOCS = args.dump_problem_docs
+
     cy = Graph(host = args.neo4j_host, password = args.neo4j_password, bolt_port = args.bolt_port, http_port = args.http_port) 
 
     _build_constraint_index('subject','id',cy)
@@ -1267,6 +1378,7 @@ if __name__ == '__main__':
     for node_type in node_skip_counts:
         count = node_skip_counts[node_type]
         sys.stdout.write("  {0} : {1}\n".format(node_type, str(count)))
+    sys.stdout.write("\n")
 
     for key in nodes:
 
@@ -1330,6 +1442,17 @@ if __name__ == '__main__':
     for subtype in NO_UPSTREAM_SRS:
         count = len(NO_UPSTREAM_SRS[subtype])
         sys.stdout.write("  {0} : {1}\n".format(subtype, str(count)))
+    sys.stdout.write("\n")
+
+    # node counts by type
+    print("node counts by type/subtype:")
+    for t in sorted(NODES_BY_TYPE):
+        print(t + ": " + str(NODES_BY_TYPE[t]))
+        if t in PROPS_BY_TYPE:
+            pbt = PROPS_BY_TYPE[t]
+            for p in pbt:
+                print(" " + str(pbt[p]) + " - " + p)
+    sys.stdout.write("\n")
 
     # insert nodes (this order appears to yield the best performance):
     _insert_nodes(cy, 'subject')

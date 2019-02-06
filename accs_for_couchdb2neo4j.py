@@ -2,22 +2,6 @@
 #
 # Contains accessories (Some functions and some dicts) to convert from OSDF syntax to what will be loaded in Neo4j.
 
-# This function takes in a unicode value found in the couch dump and will replace quotes,
-# either single or double, with literal quotes so that these can be passed to a Cypher 
-# statement without escaping out early. May seem a bit round-about, but essentially 
-# each unicode value needs to turn into a string in order to do replacement of quotes
-# and must be sent back to unicode for Python processing into an eventual Cypher query.
-def mod_quotes(val):
-    if isinstance(val, unicode):
-        val = val.encode('utf-8')
-        val = val.replace("'",r"\'")
-        val = val.replace('"',r'\"')
-        val = val.decode('utf-8')
-        # In order to search the DB as you would expect, convert number only strings to digits
-        if val.isdigit():
-            val = float(val) # float just in case
-    return val
-
 # Mapping from OSDF node type to Neo4J node type (Case, File, Tags) or MIMARKS, Mixs
 nodes = {
     'project': 'Case',
@@ -142,12 +126,6 @@ study_name_dict = {
     'Inflammatory Bowel Disease Multi-omics Database (IBDMDB)':'IBDMDB',
     'prediabetes':'T2D'
 }
-
-# Some basic syntax corrections
-#syntax_dict = {
-#    '16s':'16S',
-#    'wgs':'WGS'
-#}
 
 # Remap data format values 
 file_format_dict = {
@@ -591,3 +569,75 @@ ignore = {
     '5a950f27980b5d93e4c16da1243b821c',
     '52d8c92f2d3660b9add954d544a02d90'
 }
+
+node_type_mapping = {
+    # top-level mapping on node_type
+    '_key': 'node_type',
+    'wgs_raw_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'host_wgs_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
+    'microb_transcriptomics_raw_seq_set': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'host_transcriptomics_raw_seq_set': {'data_modality': 'transcriptome', 'data_type': 'sequence', 'organism_type': 'host'},
+    # TODO - change data_modality to "epigenetics" or "epigenomics"?
+    'host_epigenetics_raw_seq_set': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
+    # TODO - change data_modality to "variation" or "genomic variation"?
+    'host_variant_call': {'data_modality': 'whole genome', 'data_type': 'sequence', 'organism_type': 'host'},
+    '16s_raw_seq_set': {'data_modality': 'marker sequence', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    '16s_trimmed_seq_set': {'data_modality': 'marker sequence', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+    'proteome': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'host'},
+    'metaproteome': {'data_modality': 'metaproteome', 'data_type': 'abundance', 'organism_type': 'multi-organism'},
+    'metabolome': {'data_modality': 'metabolome', 'data_type': 'abundance', 'organism_type': 'host'},
+
+    # organism_type = dependent upon parent assay node (either 'host' or 'bacterial')
+    'lipidome': {'data_modality': 'lipidome', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'lipidome'},
+    'cytokine': {'data_modality': 'cytokine', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'transcriptome'},
+    'serology': {'data_modality': 'serology', 'data_type': 'abundance', 'organism_type': { '_key': 'parent' }, 'abundance_type': 'serology'},
+
+    # TODO: metametabolome: metabolome - abundance - multi-organism
+
+    'abundance_matrix': {
+        # sub-mapping on matrix_type
+        '_key': 'matrix_type',
+        'wgs_functional': {'data_modality': 'whole metagenome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'functional'},
+        'wgs_community': {'data_modality': 'whole metagenome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'community'},
+        '16s_community': {'data_modality': 'marker sequence', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'community'},
+        'microb_metatranscriptome': {'data_modality': 'metatranscriptome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'transcriptome'},
+        'microb_metabolome': {'data_modality': 'metabolome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'metabolome'},
+        'microb_proteomic': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'bacterial', 'abundance_type': 'proteome'},
+        'host_transcriptome': {'data_modality': 'transcriptome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
+        'host_cytokine': {'data_modality': 'cytokine', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'transcriptome'},
+        'host_lipidomic': {'data_modality': 'lipidome', 'data_type': 'abundance', 'organism_type': 'host', 'abundance_type': 'lipidome'}
+        },
+
+    'alignment': {
+        # sub-mapping on study - don't want to assume the same mapping for non-HMP data
+        '_key': 'study',
+        'Human microbiome project WGS production phase I.': {'data_modality': 'whole metagenome', 'data_type': 'alignment', 'organism_type': 'bacterial'}
+        },
+
+    'annotation': {
+        '_key': 'study',
+        'Human microbiome project WGS production phase I.':
+            {
+            # sub-mapping on subtype
+            '_key': 'subtype',
+            # multi-FASTA protein files
+            'hmgi': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'hmhgi': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'wgs_annotation': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            # GFF files
+            'hmgi2': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+            'hmcgi2': {'data_modality': 'metatranscriptome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+            }
+
+        },
+
+    'clustered_seq_set': {
+        '_key': 'abbrev',
+        'HMGC': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'},
+        'HMGC2': {'data_modality': 'metaproteome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+    },
+    'viral_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'viral'},
+    'proteome_nonpride': {'data_modality': 'proteome', 'data_type': 'abundance', 'organism_type': 'host'},
+    'wgs_assembled_seq_set': {'data_modality': 'whole metagenome', 'data_type': 'sequence', 'organism_type': 'bacterial'}
+
+    }
